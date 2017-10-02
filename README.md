@@ -22,7 +22,7 @@ better give to Caesar what is Caesar's.
 Hardware
 --------
 
-My code works at home, that is on a linux distro and a AMD RX 470 (free AMDGPU driver).
+My code works at home, that is on a Linux distro and a AMD RX 470 (free AMDGPU driver).
 
 ```
 Renderer: Gallium 0.4 on AMD POLARIS10 (DRM 3.3.0 / 4.8.0-41-generic, LLVM 4.0.0)
