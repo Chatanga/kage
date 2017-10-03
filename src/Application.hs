@@ -1,36 +1,61 @@
 module Application (
-    Event(..),
-    Scene(..),
-    run
+    runApplication
 ) where
 
 import Control.Applicative
-import Control.Monad
 import Control.Concurrent
-import Data.Maybe
+import Control.Monad
 import Data.IORef
+import Data.Maybe
 import qualified Data.Set as Set
-import Numeric (showGFloat)
-import System.Log.Logger
 import Data.Tree
 import Data.Tree.Zipper
-
 import qualified Graphics.Rendering.OpenGL as GL
 import Graphics.Rendering.OpenGL (get, ($=),($~),($~!)) -- could also be used with IORef
 import qualified Graphics.UI.GLFW as GLFW
-import Linear as LP
+import Numeric (showGFloat)
+import System.Log.Logger
 
+import Scene
 import View
 import World
-import Scene
-import FunctionalGL
 
 ----------------------------------------------------------------------------------------------------
 
 type SceneUI = UI (Maybe Scene)
 
-run :: String -> IO ()
-run name = do
+createSceneView :: Bool -> Layout (Maybe Scene) -> Maybe Scene -> View (Maybe Scene)
+createSceneView hasFocus layout content = View
+    (GL.Position 0 0, GL.Size 0 0)
+    content
+    hasFocus
+    False
+    []
+    sceneHandleEvent
+    layout
+
+{- | Handle an event throw simple delegation to its inner content scene, if any. A scene being not
+aware of the view holding it, any change will stay local (excepted for a Nothing interpreted as a
+closure).
+-}
+sceneHandleEvent :: ViewHandleEvent (Maybe Scene)
+sceneHandleEvent event treeLoc =
+    let view = getLabel treeLoc
+        (_, size) = viewLocalBounds view
+    in case viewContent view of
+        Nothing -> return BubbleUp
+        Just scene -> do
+            content' <- sceneManipulate scene size event
+            case content' of
+                Nothing -> return Terminate
+                Just scene' ->
+                    let view' = view{ viewContent = Just scene' }
+                    in  return (Consume (modifyLabel (const view') treeLoc))
+
+----------------------------------------------------------------------------------------------------
+
+runApplication :: String -> IO ()
+runApplication name = do
     let (w , h) = (800, 600)
         size = GL.Size (fromIntegral w) (fromIntegral h)
 
@@ -58,16 +83,13 @@ run name = do
 
     currentWorld <- newIORef =<< initWorld
     currentContext <- newIORef =<< initContext
+
     let masterScene = initScene DeferredShading currentWorld currentContext
         radarScene = initScene ForwardShading currentWorld currentContext
         [shadowScene, positionScene, normalScene, albedoAndSpecularScene] =
             map (`initColorBufferScene` currentContext) [0..3]
 
-    currentSize <- newIORef size
-    needLayout <- newIORef False
-    quit <- newIORef False
-
-    currentUI <- newIORef . createUI $
+    uiRef <- newIORef . createUI $
         Node (createSceneView False adaptativeLayout Nothing)
         [   Node (createSceneView True (anchorLayout [AnchorConstraint (Just 50) (Just 50) Nothing Nothing]) (Just masterScene))
             [   Node (createSceneView False (fixedLayout (GL.Size 150 150)) (Just radarScene)) []
@@ -78,16 +100,17 @@ run name = do
         ,   Node (createSceneView False defaultLayout (Just albedoAndSpecularScene)) []
         ]
 
-    GLFW.setWindowSizeCallback window $ Just $ \_ w h -> do
-        currentSize $= GL.Size (fromIntegral w) (fromIntegral h)
-        needLayout $= True
+    sizeRef <- newIORef size
+    quitRef <- newIORef False
+
+    GLFW.setWindowSizeCallback window $ Just $ \_ w h ->
+        sizeRef $= GL.Size (fromIntegral w) (fromIntegral h)
 
     let doProcessEvent event = do
-            ui <- get currentUI
-            size <- get currentSize
+            ui <- get uiRef
             ui' <- processEvent ui event
-            currentUI $= ui'
-            quit $= uiClosing ui'
+            uiRef $= ui'
+            quitRef $= uiTerminated ui'
 
     GLFW.setKeyCallback window $ Just $ \w k n ks mk ->
         doProcessEvent (EventKey k n ks mk)
@@ -99,44 +122,16 @@ run name = do
     GLFW.swapInterval 1 -- VSync on
 
     -- run the main loop
-    mainLoop window currentWorld currentUI currentSize quit (0, Nothing, Nothing)
+    mainLoop window currentWorld uiRef sizeRef quitRef (0, Nothing, Nothing)
 
-    -- Cleaning
+    -- cleaning
     world <- get currentWorld
-    mapM_ o3d_dispose (fst (worldFireBalls world) : worldObjects world)
+    disposeWorld world
+    context <- get currentContext
+    disposeContext context
 
     GLFW.destroyWindow window
     GLFW.terminate
-
-createSceneView :: Bool -> Layout (Maybe Scene) -> Maybe Scene -> View (Maybe Scene)
-createSceneView hasFocus layout content = View
-    (GL.Position 0 0, GL.Size 0 0)
-    content
-    hasFocus
-    False
-    []
-    sceneHandleEvent
-    layout
-
-{- | Handle an event throw simple delegation to its inner content scene, if any. A scene being not
-aware of the view holding it, any change will stay local (excepted for a Nothing interpreted as a
-closure).
--}
-sceneHandleEvent :: ViewHandleEvent (Maybe Scene)
-sceneHandleEvent event treeLoc = do
-    let view = getLabel treeLoc
-        scene = viewContent view
-        (_, size) = viewLocalBounds view
-    case scene of
-        Nothing -> return Nothing
-        Just scene -> do
-            content' <- sceneManipulate scene size event
-            -- putStrLn $ "handle -> " ++ show event
-            case content' of
-                Nothing -> return (Just (sendEvent EventClose treeLoc))
-                Just scene' ->
-                    let view' = view{ viewContent = Just scene' }
-                    in  return (Just (modifyLabel (const view') treeLoc))
 
 mainLoop
     :: GLFW.Window
@@ -146,7 +141,7 @@ mainLoop
     -> IORef Bool
     -> (Int, Maybe Double, Maybe Double)
     -> IO ()
-mainLoop window currentWorld currentUI currentSize quit (frameCount, mt0, mt1) = do
+mainLoop window worldRef uiRef sizeRef quitRef (frameCount, mt0, mt1) = do
     mt2 <- GLFW.getTime
     let elapsedSeconds = fromMaybe 1 ((-) <$> mt2 <*> mt0)
     (fps, timing) <- if elapsedSeconds > 0.25
@@ -157,39 +152,38 @@ mainLoop window currentWorld currentUI currentSize quit (frameCount, mt0, mt1) =
         else
             return (Nothing, (frameCount + 1, mt0, mt2))
 
-    size@(GL.Size w h) <- get currentSize
-    currentUI $~ layout size
+    size@(GL.Size w h) <- get sizeRef
+    uiRef $~ layout size
 
     let frameDuration = fromMaybe 0 ((-) <$> mt2 <*> mt1)
-    get currentWorld >>= animateWorld frameDuration >>= ($=) currentWorld
-    get currentUI >>= animateUI frameDuration >>= ($=) currentUI
+    get worldRef >>= animateWorld frameDuration >>= ($=) worldRef
+    get uiRef >>= animateUI frameDuration >>= ($=) uiRef
 
-    ui <- get currentUI
+    ui <- get uiRef
     when (w > 0) $ do -- avoid an upcoming divide by zero
         GL.clear [GL.ColorBuffer]
-        renderView size (uiRoot ui)
-        -- GL.flush
+        renderViewTree size (uiRoot ui)
         GLFW.swapBuffers window
 
     GLFW.pollEvents
-    shouldClose <- (||) <$> get quit <*> GLFW.windowShouldClose window
-    when shouldClose $ infoM "Kage" "Exiting"
+    shouldQuit <- (||) <$> get quitRef <*> GLFW.windowShouldClose window
+    when shouldQuit $ infoM "Kage" "Exiting"
 
-    unless shouldClose $
-        mainLoop window currentWorld currentUI currentSize quit timing
+    unless shouldQuit $
+        mainLoop window worldRef uiRef sizeRef quitRef timing
 
 animateUI :: Double -> SceneUI -> IO SceneUI
-animateUI timeDelta ui = do
+animateUI frameDuration ui = do
     root' <- forM (uiRoot ui) $ \view -> do
         let (_, size) = viewLocalBounds view
         c <- case viewContent view of
-            Just scene -> Just <$> sceneAnimate scene size timeDelta
+            Just scene -> Just <$> sceneAnimate scene size frameDuration
             Nothing -> return Nothing
         return view{ viewContent = c }
     return $ ui{ uiRoot = root' }
 
-renderView :: GL.Size -> Tree (View (Maybe Scene)) -> IO ()
-renderView (GL.Size screenWidth screenHeigh) tree = do
+renderViewTree :: GL.Size -> Tree (View (Maybe Scene)) -> IO ()
+renderViewTree (GL.Size screenWidth screenHeigh) tree = do
     let view = rootLabel tree
     case viewContent view of
         Just scene -> do
@@ -199,4 +193,4 @@ renderView (GL.Size screenWidth screenHeigh) tree = do
             sceneRender scene (GL.Size w h)
             GL.flush
         _ -> return ()
-    mapM_ (renderView (GL.Size screenWidth screenHeigh)) (subForest tree)
+    mapM_ (renderViewTree (GL.Size screenWidth screenHeigh)) (subForest tree)

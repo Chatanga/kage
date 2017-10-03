@@ -1,5 +1,6 @@
 module View (
     Event(..),
+    EventAction(..),
     ViewHandleEvent,
     Layout(..),
     fixedLayout,
@@ -11,7 +12,6 @@ module View (
     Bounds,
     View(..),
     createView,
-    sendEvent,
     UI(..),
     createUI,
     layout,
@@ -40,7 +40,7 @@ data UI a = UI
     { uiRoot :: Tree (View a)
     , uiCursorPos :: Maybe (Double, Double)
     , uiMouseDragged :: Bool
-    , uiClosing :: Bool
+    , uiTerminated :: Bool
     } deriving Show
 
 createUI :: Tree (View a) -> UI a
@@ -65,7 +65,7 @@ createView ref = View
     False
     False
     []
-    (\_ _ -> return Nothing)
+    (\_ _ -> return BubbleUp)
     defaultLayout
 
 instance Show (View a) where
@@ -227,16 +227,17 @@ data Event
     | EventChar         !Char
     | EventCursorExited
     | EventCursorEntered
-    | EventClose
     deriving Show
 
+data EventAction a = BubbleUp | Terminate | Discard | Consume (TreeLoc (View a))
+
 -- Just => consume event / Nothing => bubble up
-type ViewHandleEvent a = Event -> TreeLoc (View a) -> IO (Maybe (TreeLoc (View a)))
+type ViewHandleEvent a = Event -> TreeLoc (View a) -> IO (EventAction a)
 
 defaultViewHandleEvent :: Show a => ViewHandleEvent a
 defaultViewHandleEvent event loc = do
     putStrLn $ "Handle event " ++ show event ++ " in " ++ show (viewContent (getLabel loc))
-    return (Just loc)
+    return BubbleUp
 
 pushEvent :: Event -> View a -> View a
 pushEvent event view = view{ viewEventQueue = event : viewEventQueue view }
@@ -248,9 +249,6 @@ popEvent view = case viewEventQueue view of
 
 requestExclusiveFocus :: TreeLoc (View a) -> TreeLoc (View a)
 requestExclusiveFocus = undefined -- TODO
-
-sendEvent :: Event -> TreeLoc (View a) -> TreeLoc (View a)
-sendEvent event = modifyLabel (pushEvent event)
 
 testProcessEvent :: IO ()
 testProcessEvent = do
@@ -298,8 +296,6 @@ processEvent :: UI a -> Event -> IO (UI a)
 
 processEvent ui@(UI _ _ _ True) event = return ui
 
-processEvent ui EventClose = return ui{ uiClosing = True }
-
 processEvent ui (EventCursorPos xPos yPos) = do
     let cursorPos = (xPos, yPos)
         -- Register an EventCursorExited in each view where it is located (0-1 in principle).
@@ -314,20 +310,27 @@ processEvent ui (EventCursorPos xPos yPos) = do
         Nothing -> return r -- Coalesced into nothing, like I’ve said.
         Just loc -> bubbleUpCursorEntry loc
     -- Unpop all the remaining exit events, updating the tree each time.
-    l3 <- updateUntilStable (\event loc -> viewHandleEvent (getLabel loc) event loc) (root l2)
+    ml3 <- updateUntilStable (\event loc -> viewHandleEvent (getLabel loc) event loc) (root l2)
     -- Then process a final event for the actual cursor move to the view where it is now
     -- located.
-    l4 <- case selectDeepestAt cursorPos (root l3) of
-        Nothing -> return l3
-        Just loc -> bubbleUp (\l -> viewHandleEvent (getLabel l) (EventCursorPos xPos yPos) l) loc
-    return (UI (toTree (root l4)) (Just cursorPos) (uiMouseDragged ui) False)
+    ml4 <- case ml3 of
+        Just l3 ->
+            case selectDeepestAt cursorPos (root l3) of
+                Nothing -> return (Just l3)
+                Just loc -> bubbleUp (\l -> viewHandleEvent (getLabel l) (EventCursorPos xPos yPos) l) loc
+        Nothing -> return Nothing
+    case ml4 of
+        Just l4 -> return (UI (toTree (root l4)) (Just cursorPos) (uiMouseDragged ui) False)
+        Nothing -> return (ui{ uiTerminated = True })
 
 processEvent ui event@EventMouseButton{} =
     case selectOn viewHasCursor (fromTree (uiRoot ui)) of
         Nothing -> return ui
         Just loc -> do
-            l <- bubbleUp (\l -> viewHandleEvent (getLabel l) event l) loc
-            return $ ui{ uiRoot = toTree (root l) }
+            ml <- bubbleUp (\l -> viewHandleEvent (getLabel l) event l) loc
+            case ml of
+                Just l -> return $ ui{ uiRoot = toTree (root l) }
+                Nothing -> return (ui{ uiTerminated = True })
 
 processEvent ui event@(EventKey k _ ks _) = do
     when (ks == GLFW.KeyState'Released && k == GLFW.Key'Q) $
@@ -335,8 +338,10 @@ processEvent ui event@(EventKey k _ ks _) = do
     case selectOn viewHasFocus (fromTree (uiRoot ui)) of
         Nothing -> return ui
         Just loc -> do
-            l <- bubbleUp (\l -> viewHandleEvent (getLabel l) event l) loc
-            return $ ui{ uiRoot = toTree (root l) }
+            ml <- bubbleUp (\l -> viewHandleEvent (getLabel l) event l) loc
+            case ml of
+                Just l -> return $ ui{ uiRoot = toTree (root l) }
+                Nothing -> return (ui{ uiTerminated = True })
 
 processEvent ui event = error $ "Unhandled event type: " ++ show event
 
@@ -352,41 +357,48 @@ bubbleUpCursorEntry loc = let view = getLabel loc in
             result <- viewHandleEvent view EventCursorEntered loc
             case result of
                 -- si accepté alors arrêter après prise en compte,
-                Just loc' ->
+                Consume loc' ->
                     let view' = (getLabel loc'){ viewHasCursor = True }
                     in  return (setLabel view' loc')
+                Discard ->
+                    let view' = (getLabel loc){ viewHasCursor = True }
+                    in  return (setLabel view' loc)
                 -- sinon remonter
-                Nothing -> case parent loc of
+                BubbleUp -> case parent loc of
                     Nothing -> return loc
                     Just p -> bubbleUpCursorEntry p
 
 bubbleUp
-    :: (TreeLoc (View a) -> IO (Maybe (TreeLoc (View a))))
+    :: (TreeLoc (View a) -> IO (EventAction a))
     -> TreeLoc (View a)
-    -> IO (TreeLoc (View a))
+    -> IO (Maybe (TreeLoc (View a)))
 bubbleUp update loc = do
     result <- update loc
     case result of
-        Just loc' -> return loc'
-        Nothing -> case parent loc of
-            Nothing -> return loc
+        Consume loc' -> return (Just loc')
+        Discard -> return (Just loc)
+        BubbleUp -> case parent loc of
+            Nothing -> return (Just loc)
             Just p -> bubbleUp update p
+        Terminate -> return Nothing
 
--- TODO Parcourir tout l’arbre pour trouver l’événement le plus ancien,
--- pas simplement le premier.
+-- TODO Iterate the whole tree to pick the oldest event, not simply the first found.
 updateUntilStable
     :: ViewHandleEvent a
     -> TreeLoc (View a)
-    -> IO (TreeLoc (View a))
+    -> IO (Maybe (TreeLoc (View a)))
 updateUntilStable update loc = do
     let hasEvent = not . null . viewEventQueue . getLabel
     case listToMaybe (filter hasEvent (walkDeepFirst False loc)) of
-        Nothing -> return loc
-        Just loc' ->
+        Nothing -> return (Just loc)
+        Just loc' -> do
             let view = getLabel loc'
                 Just (view', event) = popEvent view
             -- TODO exit on error if too many iterations
-            in  bubbleUp (update event) (setLabel view' loc') >>= updateUntilStable update
+            ml <- bubbleUp (update event) (setLabel view' loc')
+            case ml of
+                Just l -> updateUntilStable update l
+                Nothing -> return Nothing
 
 walkDeepFirst :: Bool -> TreeLoc (View a) -> [TreeLoc (View a)]
 walkDeepFirst preFixed loc = x ++ maybe [] (walkDeepFirst preFixed) (right loc) where

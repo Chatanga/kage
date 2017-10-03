@@ -2,7 +2,9 @@ module Scene (
     Scene(..),
     RenderingMode(..),
     initWorld,
+    disposeWorld,
     initContext,
+    disposeContext,
     initScene,
     initColorBufferScene
 ) where
@@ -82,7 +84,7 @@ getUp camera = V3 0 0 1
 data Scene = Scene
     { sceneRender :: Size -> IO ()
     , sceneAnimate :: Size -> Double -> IO Scene
-    , sceneManipulate :: Size -> Event -> IO (Maybe Scene)
+    , sceneManipulate :: Size -> Event -> IO (Maybe Scene) -- Nothing mean exit here (TODO TBC)
     }
 
 -- Distinguer le monde partagé du monde UI subjectif (quoique partageable aussi).
@@ -122,6 +124,10 @@ initWorld = do
             0
     return world
 
+disposeWorld :: World -> IO ()
+disposeWorld world =
+    mapM_ o3d_dispose (fst (worldFireBalls world) : worldObjects world)
+
 initContext :: IO Context
 initContext = do
     shadowContext <- createShadowContext shadowMapSize :: IO (Context3D, TextureObject)
@@ -137,6 +143,11 @@ initContext = do
             (V2 0 0)
             Nothing
     return context
+
+disposeContext :: Context -> IO ()
+disposeContext context = do
+    c3d_dispose (fst (contextShadowContext context))
+    snd (contextDeferredStage context)
 
 toWorld :: Size -> V2 Double -> M44 GLfloat -> M44 GLfloat -> V4 GLfloat
 toWorld (Size width height) (V2 x y) projection camera = rectify target where
@@ -196,10 +207,7 @@ animate renderingMode worldRef contextRef (Size width height) timeDelta = do
 
 manipulate :: RenderingMode -> IORef World -> IORef Context -> Size -> Event -> IO (Maybe Scene)
 
-manipulate renderingMode worldRef contextRef size (EventKey k _ _ _) | k == GLFW.Key'Escape = do
-    context <- get contextRef
-    -- c3d_dispose (fst (contextShadowContext context))
-    -- snd (contextDeferredStage context)
+manipulate renderingMode worldRef contextRef size (EventKey k _ _ _) | k == GLFW.Key'Escape =
     return Nothing
 
 manipulate renderingMode worldRef contextRef size (EventKey k _ ks _) | k == GLFW.Key'F1 && ks == GLFW.KeyState'Pressed = do
