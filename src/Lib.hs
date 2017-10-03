@@ -20,7 +20,7 @@ kickOut = do
     updateGlobalLogger "Kage" (addHandler h)
     updateGlobalLogger "Kage" (setLevel INFO)
 
-    let line = replicate 80 '━'
+    let line = replicate 80 '─'
     infoM "Kage" line
 
     runApplication "Playground"

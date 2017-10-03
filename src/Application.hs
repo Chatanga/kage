@@ -16,6 +16,7 @@ import qualified Graphics.UI.GLFW as GLFW
 import Numeric (showGFloat)
 import System.Log.Logger
 
+import Layouts
 import Scene
 import View
 import World

@@ -3,12 +3,9 @@ module View (
     EventAction(..),
     ViewHandleEvent,
     Layout(..),
-    fixedLayout,
     defaultLayout,
-    borderLayout,
-    AnchorConstraint(..),
-    anchorLayout,
-    adaptativeLayout,
+    setPosition,
+    setSize,
     Bounds,
     View(..),
     createView,
@@ -16,14 +13,9 @@ module View (
     createUI,
     layout,
     processEvent,
-    --
-    testProcessEvent
 ) where
 
-import Control.Arrow ((***))
 import Control.Monad
-import Data.IORef
-import Data.List
 import Data.Maybe
 import Data.Tree
 import Data.Tree.Zipper
@@ -31,8 +23,6 @@ import Data.Tree.Zipper
 import qualified Graphics.Rendering.OpenGL as GL
 import qualified Graphics.UI.GLFW as GLFW
 import qualified Linear as LP
-
-import Debug
 
 ----------------------------------------------------------------------------------------------------
 
@@ -93,10 +83,6 @@ defaultLayout = Layout
     (const (Nothing, Nothing))
     setSize
 
-fixedLayout (GL.Size w h) = Layout
-    (const (Just w, Just h))
-    setSize
-
 setPosition position tree = tree { rootLabel = view' } where
     view = rootLabel tree
     (_, size) = viewLocalBounds view
@@ -107,148 +93,7 @@ setSize size tree = tree { rootLabel = view' } where
     (position, _) = viewLocalBounds view
     view' = view{ viewLocalBounds = (position, size) }
 
-setBounds position size tree = layoutSetSize (viewLayout (rootLabel tree')) size tree' where
-    tree' = setPosition position tree
-
-{-
-    ┏━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-    ┃           top            ┃
-    ┠─────┬──────────────┬─────┨
-    ┃     │              │     ┃
-    ┃     │              │     ┃
-    ┃     │              │     ┃
-    ┃left │    center    │right┃
-    ┃     │              │     ┃
-    ┃     │              │     ┃
-    ┃     │              │     ┃
-    ┠─────┴──────────────┴─────┨
-    ┃          bottom          ┃
-    ┗━━━━━━━━━━━━━━━━━━━━━━━━━━┛
--}
-
-data BordelLayouPosition = Center | Top | Left | Bottom | Right
-
-borderLayout :: [BordelLayouPosition] -> Layout a
-borderLayout positions = undefined -- TODO
-
-{-
-    ┏━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-    ┃               ▲          ┃
-    ┃               ┆ top      ┃
-    ┃               ▼          ┃
-    ┃           ┌───────┐      ┃
-    ┃    left   │       │ right┃
-    ┃◀---------▶│       │◀----▶┃
-    ┃           │       │      ┃
-    ┃           └───────┘      ┃
-    ┃               ▲          ┃
-    ┃               ┆ bottom   ┃
-    ┃               ▼          ┃
-    ┗━━━━━━━━━━━━━━━━━━━━━━━━━━┛
--}
-
-data AnchorConstraint = AnchorConstraint
-    { topDistance :: Maybe GL.GLsizei
-    , rightDistance :: Maybe GL.GLsizei
-    , bottomDistance :: Maybe GL.GLsizei
-    , leftDistance :: Maybe GL.GLsizei
-    } deriving Show
-
-anchorLayout :: [AnchorConstraint] -> Layout a
-anchorLayout constraints = Layout getter setter where
-    getter t = (Nothing, Nothing)
-    setter s t = setSize s t{ subForest = zipWith updateChild constraints (subForest t) } where
-        (GL.Size w h) = s
-        updateChild constraint child = setBounds (GL.Position xChild yChild) (GL.Size wChild hChild) child where
-            (mWidth, mHeigh) = layoutGetNaturalSize (viewLayout (rootLabel child)) child
-            (xChild, wChild) = case (leftDistance constraint, mWidth, rightDistance constraint) of
-                (Nothing, _, Nothing) -> let iw = fromMaybe w mWidth in ((w - iw) `div` 2, iw) -- centrage
-                (Just l, _, Nothing) -> (l, w') where w' = fromMaybe (w - l) mWidth
-                (Nothing, _, Just r) -> (w - w' - r, w') where w' = fromMaybe (w - r) mWidth
-                (Just l, _, Just r) -> (l, w - l - r) -- La taille naturelle du composant est ignorée.
-            (yChild, hChild) = case (topDistance constraint, mHeigh, bottomDistance constraint) of
-                (Nothing, _, Nothing) -> let ih = fromMaybe h mHeigh in ((h - ih) `div` 2, ih) -- centrage
-                (Just t, _, Nothing) -> (t, h') where h' = fromMaybe (h - t) mHeigh
-                (Nothing, _, Just b) -> (h - h' - b, h') where h' = fromMaybe (h - b) mHeigh
-                (Just t, _, Just b) -> (t, h - t - b) -- La taille naturelle du composant est ignorée.
-
-{-
-    ┏━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-    ┃                          ┃
-    ┃           9x27           ┃
-    ┃         (master)         ┃
-    ┃                          ┃
-    ┃                          ┃
-    ┃                          ┃
-    ┃                          ┃
-    ┃                          ┃
-    ┠────────┬────────┬────────┨
-    ┃  3x9   │  3x9   │  3x9   ┃
-    ┃(slave) │(slave) │(slave) ┃
-    ┗━━━━━━━━┷━━━━━━━━┷━━━━━━━━┛
--}
-
-adaptativeLayout :: Layout a
-adaptativeLayout = Layout getter setter where
-    getter t = case subForest t of
-        [] -> (Nothing, Nothing)
-        (master : slaves) ->
-            let n = fromIntegral (length slaves)
-                (mw, mh) = layoutGetNaturalSize (viewLayout (rootLabel master)) master
-            in  if n > 0
-                then (mw, (\h -> h + h `div` n) <$> mh)
-                else (mw, mh)
-    setter s t = setSize s t' where
-        t' = case subForest t of
-            [] -> t
-            (master : slaves) ->
-                let n = fromIntegral (length slaves)
-                in  if n > 0
-                    then
-                        let
-                            (GL.Size w h) = s
-                            wMaster = w
-                            hMaster = (n * h) `div` (n + 1)
-                            wSlave = w `div` n
-                            hSlave = h - hMaster
-                            master' = setBounds (GL.Position 0 0) (GL.Size wMaster hMaster) master
-                            updateSlave index = setBounds (GL.Position (wSlave * index) hMaster) (GL.Size wSlave hSlave)
-                        in
-                        t{ subForest = master' : zipWith updateSlave [0..] slaves }
-                    else
-                        t{ subForest = [setBounds (GL.Position 0 0) s master] }
-
 ----------------------------------------------------------------------------------------------------
-
-data Event
-    = EventMouseButton  !GLFW.MouseButton !GLFW.MouseButtonState !GLFW.ModifierKeys
-    | EventCursorPos    !Double !Double
-    | EventKey          !GLFW.Key !Int !GLFW.KeyState !GLFW.ModifierKeys
-    | EventChar         !Char
-    | EventCursorExited
-    | EventCursorEntered
-    deriving Show
-
-data EventAction a = BubbleUp | Terminate | Discard | Consume (TreeLoc (View a))
-
--- Just => consume event / Nothing => bubble up
-type ViewHandleEvent a = Event -> TreeLoc (View a) -> IO (EventAction a)
-
-defaultViewHandleEvent :: Show a => ViewHandleEvent a
-defaultViewHandleEvent event loc = do
-    putStrLn $ "Handle event " ++ show event ++ " in " ++ show (viewContent (getLabel loc))
-    return BubbleUp
-
-pushEvent :: Event -> View a -> View a
-pushEvent event view = view{ viewEventQueue = event : viewEventQueue view }
-
-popEvent :: View a -> Maybe (View a, Event)
-popEvent view = case viewEventQueue view of
-    [] -> Nothing
-    events -> Just (view{ viewEventQueue = init events }, last events)
-
-requestExclusiveFocus :: TreeLoc (View a) -> TreeLoc (View a)
-requestExclusiveFocus = undefined -- TODO
 
 testProcessEvent :: IO ()
 testProcessEvent = do
@@ -291,6 +136,37 @@ testProcessEvent = do
             return ui'
 
     foldM_ inject ui events
+
+----------------------------------------------------------------------------------------------------
+
+data Event
+    = EventMouseButton  !GLFW.MouseButton !GLFW.MouseButtonState !GLFW.ModifierKeys
+    | EventCursorPos    !Double !Double
+    | EventKey          !GLFW.Key !Int !GLFW.KeyState !GLFW.ModifierKeys
+    | EventChar         !Char
+    | EventCursorExited
+    | EventCursorEntered
+    deriving Show
+
+data EventAction a = BubbleUp | Terminate | Discard | Consume (TreeLoc (View a))
+
+type ViewHandleEvent a = Event -> TreeLoc (View a) -> IO (EventAction a)
+
+defaultViewHandleEvent :: Show a => ViewHandleEvent a
+defaultViewHandleEvent event loc = do
+    putStrLn $ "Handle event " ++ show event ++ " in " ++ show (viewContent (getLabel loc))
+    return BubbleUp
+
+pushEvent :: Event -> View a -> View a
+pushEvent event view = view{ viewEventQueue = event : viewEventQueue view }
+
+popEvent :: View a -> Maybe (View a, Event)
+popEvent view = case viewEventQueue view of
+    [] -> Nothing
+    events -> Just (view{ viewEventQueue = init events }, last events)
+
+requestExclusiveFocus :: TreeLoc (View a) -> TreeLoc (View a)
+requestExclusiveFocus = undefined -- TODO
 
 processEvent :: UI a -> Event -> IO (UI a)
 
@@ -348,22 +224,18 @@ processEvent ui event = error $ "Unhandled event type: " ++ show event
 bubbleUpCursorEntry :: TreeLoc (View a) -> IO (TreeLoc (View a))
 bubbleUpCursorEntry loc = let view = getLabel loc in
     case popEvent view of
-        -- si EventMouseExited alors simplement le dépiler et arrêter,
+        -- EventMouseExited + EventMouseEntry pairs are coalesced into nothing.
         Just (view', EventCursorExited) -> return (setLabel view'{ viewHasCursor = True } loc)
         Just (_, event) -> error $ "Unexpected event type: " ++ show event
-        -- sinon
         Nothing -> do
-            -- tenter la transformation avec EventMouseEntered :
             result <- viewHandleEvent view EventCursorEntered loc
             case result of
-                -- si accepté alors arrêter après prise en compte,
                 Consume loc' ->
                     let view' = (getLabel loc'){ viewHasCursor = True }
                     in  return (setLabel view' loc')
                 Discard ->
                     let view' = (getLabel loc){ viewHasCursor = True }
                     in  return (setLabel view' loc)
-                -- sinon remonter
                 BubbleUp -> case parent loc of
                     Nothing -> return loc
                     Just p -> bubbleUpCursorEntry p

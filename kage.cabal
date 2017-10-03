@@ -48,6 +48,7 @@ library
         Font
         FunctionalGL
         Heightmap
+        Layouts
         Misc
         Random
         Scene
