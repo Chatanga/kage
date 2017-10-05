@@ -29,12 +29,12 @@ import qualified Linear as LP
 data UI a = UI
     { uiRoot :: Tree (View a)
     , uiCursorPos :: Maybe (Double, Double)
-    , uiMouseDragged :: Bool
+    , uiMouseDrag :: Maybe (Double, Double) -- latest drag position
     , uiTerminated :: Bool
     } deriving Show
 
 createUI :: Tree (View a) -> UI a
-createUI root = UI root Nothing False False
+createUI root = UI root Nothing Nothing False
 
 type Bounds = (GL.Position, GL.Size)
 
@@ -43,15 +43,17 @@ data View a = View
     , viewContent :: a
     , viewHasFocus :: Bool
     , viewHasCursor :: Bool
+    , viewIsDragOrigin :: Bool
     , viewEventQueue :: [Event]
     , viewHandleEvent :: ViewHandleEvent a
     , viewLayout :: Layout a
     }
 
 createView :: a -> View a
-createView ref = View
+createView content = View
     (GL.Position 0 0, GL.Size 0 0)
-    ref
+    content
+    False
     False
     False
     []
@@ -110,14 +112,12 @@ testProcessEvent = do
             ]
 
         createDumpView :: String -> Bool -> (GL.GLint, GL.GLint, GL.GLsizei, GL.GLsizei) -> View String
-        createDumpView content hasFocus (x, y, w, h) = View
-            (GL.Position x y, GL.Size w h)
-            content
-            hasFocus
-            False
-            []
-            defaultViewHandleEvent
-            defaultLayout
+        createDumpView content hasFocus (x, y, w, h) = (createView content)
+            {   viewLocalBounds = (GL.Position x y, GL.Size w h)
+            ,   viewHasCursor = hasFocus
+            ,   viewHandleEvent = defaultViewHandleEvent
+            ,   viewLayout = defaultLayout
+            }
 
     print ui
 
@@ -142,6 +142,7 @@ testProcessEvent = do
 data Event
     = EventMouseButton  !GLFW.MouseButton !GLFW.MouseButtonState !GLFW.ModifierKeys
     | EventCursorPos    !Double !Double
+    | EventDrag         !Double !Double -- Delta between last drag position and current position.
     | EventKey          !GLFW.Key !Int !GLFW.KeyState !GLFW.ModifierKeys
     | EventChar         !Char
     | EventCursorExited
@@ -195,18 +196,43 @@ processEvent ui (EventCursorPos xPos yPos) = do
                 Nothing -> return (Just l3)
                 Just loc -> bubbleUp (\l -> viewHandleEvent (getLabel l) (EventCursorPos xPos yPos) l) loc
         Nothing -> return Nothing
-    case ml4 of
-        Just l4 -> return (UI (toTree (root l4)) (Just cursorPos) (uiMouseDragged ui) False)
+    let drag = uiMouseDrag ui
+    (ml5, drag') <- case ml4 of
+        Just l4 ->
+            case selectOn viewIsDragOrigin (root l4) of
+                Nothing -> return (Just l4, drag)
+                Just loc -> do
+                    let (xPosOrigin, yPosOrigin) = fromMaybe (xPos, yPos) drag
+                        (dx, dy) = (xPos - xPosOrigin, yPos - yPosOrigin)
+                    ml5 <- bubbleUp (\l -> viewHandleEvent (getLabel l) (EventDrag dx dy) l) loc
+                    return (ml5, Just (xPos, yPos))
+        Nothing -> return (Nothing, drag)
+    case ml5 of
+        Just l5 -> return (UI (toTree (root l5)) (Just cursorPos) drag' False)
         Nothing -> return (ui{ uiTerminated = True })
 
-processEvent ui event@EventMouseButton{} =
-    case selectOn viewHasCursor (fromTree (uiRoot ui)) of
+processEvent ui event@(EventMouseButton b bs _) = do
+    ui' <- case selectOn viewHasCursor (fromTree (uiRoot ui)) of
         Nothing -> return ui
         Just loc -> do
             ml <- bubbleUp (\l -> viewHandleEvent (getLabel l) event l) loc
             case ml of
                 Just l -> return $ ui{ uiRoot = toTree (root l) }
                 Nothing -> return (ui{ uiTerminated = True })
+    let resetDrag v = v{ viewIsDragOrigin = False }
+        ui'' = case b of
+            -- Consider the other buttons too.
+            GLFW.MouseButton'1 -> if bs == GLFW.MouseButtonState'Released
+                then ui'{ uiRoot = resetDrag <$> uiRoot ui', uiMouseDrag = Nothing }
+                else case (uiMouseDrag ui', uiCursorPos ui', uiMouseDrag ui') of
+                    (Nothing, Just p, Nothing) -> case selectDeepestAt p (fromTree (uiRoot ui')) of
+                        Just loc ->
+                            let loc' = modifyLabel (\v -> v{ viewIsDragOrigin = True }) loc
+                            in  ui'{ uiRoot = toTree (root loc'), uiMouseDrag = uiCursorPos ui' }
+                        _ -> ui'
+                    _ -> ui'
+            _ -> ui'
+    return ui''
 
 processEvent ui event@(EventKey k _ ks _) = do
     when (ks == GLFW.KeyState'Released && k == GLFW.Key'Q) $

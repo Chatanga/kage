@@ -54,7 +54,7 @@ data Context = Context
     ,   contextCameraName :: String
     ,   contextCameraMoves :: !(Set.Set Move)
     ,   contextCursorPosition :: V2 Double
-    ,   contextDragMove :: Maybe (V2 Double)
+    ,   contextDrag :: Maybe (V2 Double)
     }
 
 data Move
@@ -182,12 +182,11 @@ animate renderingMode worldRef contextRef (Size width height) timeDelta = do
             else p
         position = foldl applyMove (cameraPosition camera) keyMoves
         (alt, az) = (cameraAltitude camera, cameraAzimuth camera)
-        ((alt', az'), dragMove) = case contextDragMove context of
-            Nothing -> ((alt, az), Nothing)
-            Just from -> ((alt', az'), Just to) where
-                to = contextCursorPosition context
+        (alt', az') = case contextDrag context of
+            Nothing -> (alt, az)
+            Just drag -> (alt', az') where
                 ratio = cameraFov camera / realToFrac height :: GLfloat
-                V2 dAz dAlt = (realToFrac <$> (to - from)) * V2 ratio ratio
+                V2 dAz dAlt = (realToFrac <$> drag) * V2 ratio ratio
                 alt' = alt + clamp (-pi/2.01-alt) (pi/2.01-alt) dAlt
                 az' = mod' (az - dAz) (2 * pi)
         camera' = camera
@@ -200,7 +199,7 @@ animate renderingMode worldRef contextRef (Size width height) timeDelta = do
         }
 
     contextRef $= context
-        { contextDragMove = dragMove
+        { contextDrag = Nothing
         }
 
     return $ initScene renderingMode worldRef contextRef
@@ -232,15 +231,17 @@ manipulate renderingMode worldRef contextRef size event@(EventKey k _ ks _) = do
     contextRef $= context{ contextCameraMoves = moves' }
     return $ Just (initScene renderingMode worldRef contextRef)
 
+manipulate renderingMode worldRef contextRef size (EventDrag dx dy) = do
+    -- print (EventDrag dx dy)
+    context <- get contextRef
+    let drag = fromMaybe (V2 0 0) (contextDrag context) + V2 dx dy
+    contextRef $= context{ contextDrag = Just drag }
+    return $ Just (initScene renderingMode worldRef contextRef)
+
 manipulate renderingMode worldRef contextRef size (EventMouseButton b bs _) = do
     world <- get worldRef
     context <- get contextRef
-    let dragMove = case b of
-            GLFW.MouseButton'1 -> if bs == GLFW.MouseButtonState'Released
-                then Nothing
-                else Just (contextCursorPosition context)
-            _ -> contextDragMove context
-        camera = fromJust (lookup (contextCameraName context) (worldCameras world))
+    let camera = fromJust (lookup (contextCameraName context) (worldCameras world))
     newFireBalls <- if b == GLFW.MouseButton'2 && bs == GLFW.MouseButtonState'Pressed
         then do
             let (Size width height) = size
@@ -260,7 +261,7 @@ manipulate renderingMode worldRef contextRef size (EventMouseButton b bs _) = do
         else return []
     let fireBalls' = second (++ newFireBalls) (worldFireBalls world)
     worldRef $= world{ worldFireBalls = fireBalls' }
-    contextRef $= context{ contextDragMove = dragMove }
+    contextRef $= context
     return $ Just (initScene renderingMode worldRef contextRef)
 
 manipulate renderingMode worldRef contextRef size (EventCursorPos x y) = do

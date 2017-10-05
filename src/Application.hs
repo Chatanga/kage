@@ -26,14 +26,11 @@ import World
 type SceneUI = UI (Maybe Scene)
 
 createSceneView :: Bool -> Layout (Maybe Scene) -> Maybe Scene -> View (Maybe Scene)
-createSceneView hasFocus layout content = View
-    (GL.Position 0 0, GL.Size 0 0)
-    content
-    hasFocus
-    False
-    []
-    sceneHandleEvent
-    layout
+createSceneView hasFocus layout content = (createView content)
+    { viewHandleEvent = sceneHandleEvent
+    , viewLayout = layout
+    , viewHasFocus = hasFocus
+    }
 
 {- | Handle an event throw simple delegation to its inner content scene, if any. A scene being not
 aware of the view holding it, any change will stay local (excepted for a Nothing interpreted as a
