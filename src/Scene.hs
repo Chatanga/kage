@@ -1,12 +1,12 @@
 module Scene (
     Scene(..),
     RenderingMode(..),
-    initWorld,
+    createWorld,
     disposeWorld,
-    initContext,
+    createContext,
     disposeContext,
-    initScene,
-    initColorBufferScene
+    createScene,
+    createColorBufferScene
 ) where
 
 import Control.Applicative
@@ -23,7 +23,7 @@ import qualified GHC.Float as F
 -- import qualified Graphics.Rendering.FTGL as FTGL
 import Graphics.Rendering.OpenGL
 import qualified Graphics.UI.GLFW as GLFW
-import Linear as LP
+import Linear
 import Numeric (showGFloat)
 
 import Buffer
@@ -31,6 +31,7 @@ import Debug
 import Error
 import Font
 import FunctionalGL
+import Geometry
 import Heightmap
 import Misc
 import Random
@@ -44,10 +45,8 @@ import World
 
 data RenderingMode = ForwardShading | DeferredShading
 
-shadowMapSize = (4096, 4096)
-
 data Context = Context
-    {   contextShadowContext :: (Context3D, TextureObject)
+    {   contextShadowContext :: (Context3D, TextureObject, (Int, Int))
     ,   contextDeferredStage :: (Program, Dispose)
     ,   contextScreen :: Object3D
     ,   contextGeometryBuffer :: Maybe (FramebufferObject, [TextureObject], Dispose)
@@ -69,39 +68,26 @@ data Move
     | Roll Double -- dZ
     deriving (Eq, Ord, Show)
 
-getSight :: Camera -> V3 GLfloat
-getSight camera = LP.rotate (axisAngle (getLeft camera) (cameraAltitude camera)) (getBearing camera)
-
-getBearing :: Camera -> V3 GLfloat
-getBearing camera = V3 (cos a) (sin a) 0 where a = cameraAzimuth camera
-
-getLeft :: Camera -> V3 GLfloat
-getLeft camera = V3 (cos a) (sin a) 0 where a = cameraAzimuth camera + pi / 2
-
-getUp :: Camera -> V3 GLfloat
-getUp camera = V3 0 0 1
-
 data Scene = Scene
     { sceneRender :: Size -> IO ()
     , sceneAnimate :: Size -> Double -> IO Scene
-    , sceneManipulate :: Size -> Event -> IO (Maybe Scene) -- Nothing mean exit here (TODO TBC)
+    , sceneManipulate :: Size -> Event -> IO (Maybe Scene) -- nothing <=> exit
     }
 
--- Distinguer le monde partagé du monde UI subjectif (quoique partageable aussi).
-initScene :: RenderingMode -> IORef World -> IORef Context -> Scene
-initScene renderingMode worldRef contextRef = Scene
+createScene :: RenderingMode -> IORef World -> IORef Context -> Scene
+createScene renderingMode worldRef contextRef = Scene
     (display renderingMode worldRef contextRef)
     (animate renderingMode worldRef contextRef)
     (manipulate renderingMode worldRef contextRef)
 
-initColorBufferScene :: Int -> IORef Context -> Scene
-initColorBufferScene index contextRef = Scene
+createColorBufferScene :: Int -> IORef Context -> Scene
+createColorBufferScene index contextRef = Scene
     (displayBuffer contextRef index)
-    (\_ _ -> return (initColorBufferScene index contextRef))
-    (\_ _ -> return (Just (initColorBufferScene index contextRef)))
+    (\_ _ -> return (createColorBufferScene index contextRef))
+    (\_ _ -> return (Just (createColorBufferScene index contextRef)))
 
-initWorld :: IO World
-initWorld = do
+createWorld :: IO World
+createWorld = do
     heightmap <- loadHeightmap "data/heightmap-257.png"
     let heightmapScale = V3 1 1 0.1
     terrain <- createRenderableTerrain heightmap heightmapScale
@@ -128,9 +114,9 @@ disposeWorld :: World -> IO ()
 disposeWorld world =
     mapM_ o3d_dispose (fst (worldFireBalls world) : worldObjects world)
 
-initContext :: IO Context
-initContext = do
-    shadowContext <- createShadowContext shadowMapSize :: IO (Context3D, TextureObject)
+createContext :: IO Context
+createContext = do
+    shadowContext <- createShadowContext :: IO (Context3D, TextureObject, (Int, Int))
     deferredStage <- createProgramWithShaders' "deferred_stage_vs.glsl" "deferred_stage_fs.glsl"
     screen <- createScreen
     let context = Context
@@ -146,98 +132,95 @@ initContext = do
 
 disposeContext :: Context -> IO ()
 disposeContext context = do
-    c3d_dispose (fst (contextShadowContext context))
+    let (c, _, _) = contextShadowContext context
+    c3d_dispose c
     snd (contextDeferredStage context)
 
-toWorld :: Size -> V2 Double -> M44 GLfloat -> M44 GLfloat -> V4 GLfloat
-toWorld (Size width height) (V2 x y) projection camera = rectify target where
-    (w, h) = (realToFrac width, realToFrac height)
-    viewport = V4
-        (V4 (w/2) 0 0 (w/2))
-        (V4 0 (-h/2) 0 (h/2))
-        (V4 0 0 (far - near) near)
-        (V4 0 0 0 1)
-    t = viewport !*! projection !*! camera
-    target = inv44 t !* V4 (realToFrac x) (realToFrac y) 0 1
-    rectify (V4 x y z w) = V4 (x / w) (y / w) (z / w) 1
+----------------------------------------------------------------------------------------------------
 
--- TODO Preserve other cameras!
 animate :: RenderingMode -> IORef World -> IORef Context -> Size -> Double -> IO Scene
 animate renderingMode worldRef contextRef (Size width height) timeDelta = do
     world <- get worldRef
     context <- get contextRef
-    let
-        camera = fromJust (lookup (contextCameraName context) (worldCameras world))
-        moves = contextCameraMoves context
-        keyMoves =
-            [ (GoUp, getUp camera)
-            , (GoDown, - (getUp camera))
-            , (GoLeft, getLeft camera)
-            , (GoRight, - (getLeft camera))
-            , (GoForth, getSight camera)
-            , (GoBack, - (getSight camera))
-            ]
-        applyMove p (m, dp) = if Set.member m moves
-            then p + dp * realToFrac timeDelta * 10
-            else p
-        position = foldl applyMove (cameraPosition camera) keyMoves
-        (alt, az) = (cameraAltitude camera, cameraAzimuth camera)
-        (alt', az') = case contextDrag context of
-            Nothing -> (alt, az)
-            Just drag -> (alt', az') where
-                ratio = cameraFov camera / realToFrac height :: GLfloat
-                V2 dAz dAlt = (realToFrac <$> drag) * V2 ratio ratio
-                alt' = alt + clamp (-pi/2.01-alt) (pi/2.01-alt) dAlt
-                az' = mod' (az - dAz) (2 * pi)
-        camera' = camera
-            { cameraAltitude = alt'
-            , cameraAzimuth = az'
-            , cameraPosition = position }
 
-    worldRef $= world
-        { worldCameras = [(contextCameraName context, camera')]
-        }
+    -- Move a camera for real by applying any registered move for the given time delta.
+    let moveCamera camera = camera
+                { cameraAltitude = alt'
+                , cameraAzimuth = az'
+                , cameraPosition = position }
+            where
+                moves = contextCameraMoves context
+                keyMoves =
+                    [ (GoUp, getUp camera)
+                    , (GoDown, - (getUp camera))
+                    , (GoLeft, getLeft camera)
+                    , (GoRight, - (getLeft camera))
+                    , (GoForth, getSight camera)
+                    , (GoBack, - (getSight camera))
+                    ]
+                applyMove p (m, dp) = if Set.member m moves
+                    then p + dp * realToFrac timeDelta * 10
+                    else p
+                position = foldl applyMove (cameraPosition camera) keyMoves
+                (alt, az) = (cameraAltitude camera, cameraAzimuth camera)
+                (alt', az') = case contextDrag context of
+                    Nothing -> (alt, az)
+                    Just drag -> (alt', az') where
+                        ratio = cameraFov camera / realToFrac height :: GLfloat
+                        V2 dAz dAlt = (realToFrac <$> drag) * V2 ratio ratio
+                        alt' = alt + clamp (-pi/2.01-alt) (pi/2.01-alt) dAlt
+                        az' = mod' (az - dAz) (2 * pi)
 
-    contextRef $= context
-        { contextDrag = Nothing
-        }
+    let cameras = for (worldCameras world) $ \(n, c) ->
+            if n == contextCameraName context then (n, moveCamera c) else (n, c)
+    worldRef $= world{ worldCameras = cameras }
 
-    return $ initScene renderingMode worldRef contextRef
+    contextRef $= context{ contextDrag = Nothing }
+
+    return $ createScene renderingMode worldRef contextRef
+
+----------------------------------------------------------------------------------------------------
 
 manipulate :: RenderingMode -> IORef World -> IORef Context -> Size -> Event -> IO (Maybe Scene)
 
-manipulate renderingMode worldRef contextRef size (EventKey k _ _ _) | k == GLFW.Key'Escape =
-    return Nothing
+-- Handle keyboard events.
+manipulate renderingMode worldRef contextRef size (EventKey k _ ks _)
 
-manipulate renderingMode worldRef contextRef size (EventKey k _ ks _) | k == GLFW.Key'F1 && ks == GLFW.KeyState'Pressed = do
-    context <- get contextRef
-    let depthTexture = snd (contextShadowContext context)
-    saveDepthTexture shadowMapSize depthTexture "shadowmap.png"
-    return $ Just (initScene renderingMode worldRef contextRef)
+    -- Exit application on Escape.
+    | k == GLFW.Key'Escape = return Nothing
 
-manipulate renderingMode worldRef contextRef size event@(EventKey k _ ks _) = do
-    context <- get contextRef
-    let
-        moves = contextCameraMoves context
-        handleKey = if ks == GLFW.KeyState'Released then Set.delete else Set.insert
-        moves' = case k of
-            GLFW.Key'Space -> handleKey GoUp moves
-            GLFW.Key'LeftControl -> handleKey GoDown moves
-            GLFW.Key'W -> handleKey GoForth moves
-            GLFW.Key'S -> handleKey GoBack moves
-            GLFW.Key'A -> handleKey GoLeft moves
-            GLFW.Key'D -> handleKey GoRight moves
-            _ -> moves
-    contextRef $= context{ contextCameraMoves = moves' }
-    return $ Just (initScene renderingMode worldRef contextRef)
+    -- Dump the shadow map in a PNG on F1.
+    | k == GLFW.Key'F1 && ks == GLFW.KeyState'Pressed = do
+        context <- get contextRef
+        let (_, depthTexture, shadowMapSize) = contextShadowContext context
+        saveDepthTexture shadowMapSize depthTexture "shadowmap.png"
+        return $ Just (createScene renderingMode worldRef contextRef)
 
+    -- Move the camera using WASD keys (note that the keyboard layout is not taken into account).
+    | otherwise = do
+        context <- get contextRef
+        let
+            moves = contextCameraMoves context
+            handleKey = if ks == GLFW.KeyState'Released then Set.delete else Set.insert
+            moves' = case k of
+                GLFW.Key'Space -> handleKey GoUp moves
+                GLFW.Key'LeftControl -> handleKey GoDown moves
+                GLFW.Key'W -> handleKey GoForth moves
+                GLFW.Key'S -> handleKey GoBack moves
+                GLFW.Key'A -> handleKey GoLeft moves
+                GLFW.Key'D -> handleKey GoRight moves
+                _ -> moves
+        contextRef $= context{ contextCameraMoves = moves' }
+        return $ Just (createScene renderingMode worldRef contextRef)
+
+-- Rotate the camera by dragging the mouse.
 manipulate renderingMode worldRef contextRef size (EventDrag dx dy) = do
-    -- print (EventDrag dx dy)
     context <- get contextRef
     let drag = fromMaybe (V2 0 0) (contextDrag context) + V2 dx dy
     contextRef $= context{ contextDrag = Just drag }
-    return $ Just (initScene renderingMode worldRef contextRef)
+    return $ Just (createScene renderingMode worldRef contextRef)
 
+-- Shot randomly colored fire balls with the mouse right button.
 manipulate renderingMode worldRef contextRef size (EventMouseButton b bs _) = do
     world <- get worldRef
     context <- get contextRef
@@ -245,14 +228,14 @@ manipulate renderingMode worldRef contextRef size (EventMouseButton b bs _) = do
     newFireBalls <- if b == GLFW.MouseButton'2 && bs == GLFW.MouseButtonState'Pressed
         then do
             let (Size width height) = size
-                projectionMatrix = LP.perspective (cameraFov camera) (width `divR` height) near far
-                cameraMatrix = LP.lookAt
+                projectionMatrix = Linear.perspective (cameraFov camera) (width `divR` height) near far
+                cameraMatrix = Linear.lookAt
                     (cameraPosition camera)
                     (cameraPosition camera + getSight camera)
                     (getUp camera)
                 cursor = contextCursorPosition context
                 (V4 x y z _) = toWorld (Size width height) cursor projectionMatrix cameraMatrix
-                direction = LP.normalize (V3 x y z - cameraPosition camera)
+                direction = Linear.normalize (V3 x y z - cameraPosition camera)
             color <- runRandomIO $ Color3
                 <$> getRandomR (0, 1)
                 <*> getRandomR (0, 1)
@@ -262,27 +245,55 @@ manipulate renderingMode worldRef contextRef size (EventMouseButton b bs _) = do
     let fireBalls' = second (++ newFireBalls) (worldFireBalls world)
     worldRef $= world{ worldFireBalls = fireBalls' }
     contextRef $= context
-    return $ Just (initScene renderingMode worldRef contextRef)
+    return $ Just (createScene renderingMode worldRef contextRef)
 
+-- Store the cursor location.
 manipulate renderingMode worldRef contextRef size (EventCursorPos x y) = do
     world <- get worldRef
     context <- get contextRef
     contextRef $= context{ contextCursorPosition = V2 x y }
-    return $ Just (initScene renderingMode worldRef contextRef)
+    return $ Just (createScene renderingMode worldRef contextRef)
 
+-- Catch everything else.
 manipulate renderingMode worldRef contextRef size _ =
-    return $ Just (initScene renderingMode worldRef contextRef)
+    return $ Just (createScene renderingMode worldRef contextRef)
+
+----------------------------------------------------------------------------------------------------
+
+createShadowContext :: IO (Context3D, TextureObject, (Int, Int))
+createShadowContext = do
+    let (width, heigh) = (4096, 4096)
+    (fbo, depthTexture, disposeFramebuffer) <- createShadowBuffer (width, heigh)
+    -- In fragment shaders:
+    -- layout(location = 0) out vec3 color;
+    (program, disposeProgram) <- createProgramWithShaders' "shadow_vs.glsl" "shadow_fs.glsl"
+
+    let size = Size (fromIntegral width) (fromIntegral heigh)
+        render realSize program objects = do
+            backupViewport <- get viewport
+            viewport $= (Position 0 0, size)
+            bindFramebuffer DrawFramebuffer $= fbo
+            clear [DepthBuffer]
+            cullFace $= Nothing
+            frontFace $= CW
+            forM_ objects $ \(Object3D _ vao render _) ->
+                withBinding bindVertexArrayObject vao $
+                render size program
+            viewport $= backupViewport
+            bindFramebuffer DrawFramebuffer $= defaultFramebufferObject
+
+    return (Context3D program render (disposeProgram >> disposeFramebuffer), depthTexture, (width, heigh))
 
 shadowStage :: IORef World -> IORef Context -> Size -> IO (GLmatrix GLfloat, TextureObject)
 shadowStage worldRef contextRef size = do
     world <- get worldRef
     context <- get contextRef
-    let (Context3D program render _, shadowMap) = contextShadowContext context
+    let (Context3D program render _, shadowMap, _) = contextShadowContext context
         camera = fromJust (lookup (contextCameraName context) (worldCameras world))
         sun = worldSun world
         r = far / 8
-        projectionMatrix = LP.ortho (-r * 2) (r * 2) (-r) r (-r) r
-        cameraMatrix = LP.lookAt
+        projectionMatrix = Linear.ortho (-r * 2) (r * 2) (-r) r (-r) r
+        cameraMatrix = Linear.lookAt
             (cameraPosition camera - directionLightDirection sun)
             (cameraPosition camera)
             (getUp camera)
@@ -326,9 +337,9 @@ display renderingMode worldRef contextRef size = do
         camera = fromJust (lookup (contextCameraName context) (worldCameras world))
         camPosition = Vector3 cx cy cz where V3 cx cy cz = cameraPosition camera
         -- FOV (y direction, in radians), Aspect ratio, Near plane, Far plane
-        projectionMatrix = LP.perspective (cameraFov camera) (width `divR` height) near far
+        projectionMatrix = Linear.perspective (cameraFov camera) (width `divR` height) near far
         -- Eye, Center, Up
-        cameraMatrix = LP.lookAt
+        cameraMatrix = Linear.lookAt
             (cameraPosition camera)
             (cameraPosition camera + getSight camera)
             (getUp camera)
@@ -375,13 +386,7 @@ display renderingMode worldRef contextRef size = do
 
             bindFramebuffer DrawFramebuffer $= fbo
 
-            -- viewport $= (Position 0 0, size)
-            clear [ColorBuffer, DepthBuffer] -- +
-            {-
-            cullFace $= Nothing
-            depthFunc $= Just Less
-            frontFace $= CW
-            -}
+            clear [ColorBuffer, DepthBuffer]
             transformation <- newMatrix RowMajor (flattenMatrix identity) :: IO (GLmatrix GLfloat)
 
             withBinding currentProgram deferredProgram $ do
@@ -407,7 +412,7 @@ displayBuffer contextRef index size = do
     context <- get contextRef
 
     let (Object3D program vao render _) = contextScreen context
-        (_, texture) = contextShadowContext context
+        (_, texture, _) = contextShadowContext context
         pickTexture textures = if index < length textures
             then textures !! index
             else texture
@@ -492,28 +497,3 @@ renderObjectInForwardShading
                 Nothing -> id
 
         contextualizeAction (render size program)
-
-----------------------------------------------------------------------------------------------------
-
-createShadowContext :: (Int, Int) -> IO (Context3D, TextureObject)
-createShadowContext (width, height) = do
-    (fbo, depthTexture, disposeFramebuffer) <- createShadowBuffer (width, height)
-    -- In fragment shaders:
-    -- layout(location = 0) out vec3 color;
-    (program, disposeProgram) <- createProgramWithShaders' "shadow_vs.glsl" "shadow_fs.glsl"
-
-    let size = Size (fromIntegral width) (fromIntegral height)
-        render realSize program objects = do
-            backupViewport <- get viewport
-            viewport $= (Position 0 0, size)
-            bindFramebuffer DrawFramebuffer $= fbo
-            clear [DepthBuffer]
-            cullFace $= Nothing
-            frontFace $= CW
-            forM_ objects $ \(Object3D _ vao render _) ->
-                withBinding bindVertexArrayObject vao $
-                render size program
-            viewport $= backupViewport
-            bindFramebuffer DrawFramebuffer $= defaultFramebufferObject
-
-    return (Context3D program render (disposeProgram >> disposeFramebuffer), depthTexture)

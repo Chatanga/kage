@@ -79,13 +79,13 @@ runApplication name = do
         ,   ("Shading language version", GL.shadingLanguageVersion)
         ]
 
-    currentWorld <- newIORef =<< initWorld
-    currentContext <- newIORef =<< initContext
+    currentWorld <- newIORef =<< createWorld
+    currentContext <- newIORef =<< createContext
 
-    let masterScene = initScene DeferredShading currentWorld currentContext
-        radarScene = initScene ForwardShading currentWorld currentContext
+    let masterScene = createScene DeferredShading currentWorld currentContext
+        radarScene = createScene ForwardShading currentWorld currentContext
         [shadowScene, positionScene, normalScene, albedoAndSpecularScene] =
-            map (`initColorBufferScene` currentContext) [0..3]
+            map (`createColorBufferScene` currentContext) [0..3]
 
     uiRef <- newIORef . createUI $
         Node (createSceneView False adaptativeLayout Nothing)

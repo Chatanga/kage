@@ -2,9 +2,6 @@ module World (
     FireBall(..),
     DirectionLight(..),
     PointLight(..),
-    Camera(..),
-    near,
-    far,
     World(..),
     animateWorld,
     --
@@ -18,18 +15,6 @@ module World (
     createSkyBox,
     createTesselatedPyramid,
     createScreen,
-    --
-    noRotation,
-    noTranslation,
-    scaling,
-    translating,
-    showV1,
-    showV2,
-    showV3,
-    showV4,
-    toVector3,
-    toColor3,
-    toColor4
 ) where
 
 import Control.Arrow
@@ -44,6 +29,7 @@ import Numeric
 
 import Buffer
 import FunctionalGL
+import Geometry
 import Heightmap
 import Misc
 import Shader
@@ -77,20 +63,6 @@ data PointLight = PointLight
     {   pointLightPosition :: !(V3 GLfloat)
     ,   pointLightColor :: !(Color3 GLfloat)
     }   deriving (Show)
-
-data Camera = Camera
-    {   cameraPosition :: !(V3 GLfloat)
-    ,   cameraAltitude :: !GLfloat
-    ,   cameraAzimuth :: !GLfloat
-    ,   cameraFov :: !GLfloat
-    }   deriving (Show)
-
-near = 1 :: Float
-far = 1000 :: Float
-
-data BoundingInfo
-    = BoundingSphere (Linear.V3 Float) Float -- center radius
-    | OrthoBoundingBox (Linear.V3 Float) (Linear.V3 Float) -- center (witdh, height, depth)
 
 data AnyValue = AnyBoolean Bool | AnyString String | AnyInt Int | AnyFloat Float
 
@@ -314,41 +286,3 @@ createScreen = do
     (vao, render, dispose) <- createSquare (0, 0) 1.95
     (program, disposeProgram) <- createProgramWithShaders' "screen_vs.glsl" "screen_fs.glsl"
     return (Object3D program vao render (dispose >> disposeProgram))
-
-----------------------------------------------------------------------------------------------------
-
-noRotation :: (Epsilon a, Floating a) => Quaternion a
-noRotation = axisAngle (V3 0 1 0) 0
-
-noTranslation :: Num a => V3 a
-noTranslation = V3 0 0 0
-
-scaling :: Num a => V3 a -> M44 a
-scaling (V3 sx sy sz) = V4
-    (V4 sx 0 0 0)
-    (V4 0 sy 0 0)
-    (V4 0 0 sz 0)
-    (V4 0 0 0 1)
-
-translating :: Num a => V3 a -> M44 a
-translating (V3 dx dy dz) = V4
-    (V4 1 0 0 dx)
-    (V4 0 1 0 dy)
-    (V4 0 0 1 dz)
-    (V4 0 0 0 1)
-
-showV1 x = showGFloat (Just 2) (realToFrac x) ""
-showV2 (V2 x y) = showVn [x, y]
-showV3 (V3 x y z) = showVn [x, y, z]
-showV4 (V4 x y z w) = showVn [x, y, z, w]
-
-showVn v = "(" ++ intercalate ", " (map showV1 v) ++ ")"
-
-toVector3 :: V3 a -> Vector3 a
-toVector3 (V3 x y z) = Vector3 x y z
-
-toColor3 :: V3 a -> Color3 a
-toColor3 (V3 r g b) = Color3 r g b
-
-toColor4 :: V4 a -> Color4 a
-toColor4 (V4 r g b a) = Color4 r g b a

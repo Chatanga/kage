@@ -22,7 +22,6 @@ import Data.Tree.Zipper
 
 import qualified Graphics.Rendering.OpenGL as GL
 import qualified Graphics.UI.GLFW as GLFW
-import qualified Linear as LP
 
 ----------------------------------------------------------------------------------------------------
 
@@ -165,9 +164,6 @@ popEvent :: View a -> Maybe (View a, Event)
 popEvent view = case viewEventQueue view of
     [] -> Nothing
     events -> Just (view{ viewEventQueue = init events }, last events)
-
-requestExclusiveFocus :: TreeLoc (View a) -> TreeLoc (View a)
-requestExclusiveFocus = undefined -- TODO
 
 processEvent :: UI a -> Event -> IO (UI a)
 
