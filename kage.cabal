@@ -33,6 +33,8 @@ library
         mtl -any,
         random -any,
         text -any,
+        bytestring -any,
+        regex-compat -any,
         time -any,
         vector -any,
         freetype2 -any,

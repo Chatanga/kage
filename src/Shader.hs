@@ -4,6 +4,7 @@ module Shader
     ) where
 
 import Control.Monad
+import qualified Data.ByteString as Data
 import Data.Char
 import Data.List
 import qualified Data.Text as Text
@@ -11,7 +12,9 @@ import qualified Data.Text.Encoding as Text
 import Graphics.Rendering.OpenGL
 import System.FilePath
 import System.Log.Logger
+import qualified Text.Regex as RE
 
+import Debug
 import FunctionalGL
 import Misc
 
@@ -25,14 +28,12 @@ createProgramWithShaders' vertexShaderName fragmentShaderName = createProgramWit
 
 createProgramWithShaders :: [(String, ShaderType)] -> IO (Program, Dispose)
 createProgramWithShaders shaderSources = do
-    let readFileContent fileName = Text.encodeUtf8 . Text.pack <$> readFile fileName
-
     program <- createProgram
 
     shaders <- forM shaderSources $ \(shaderName, shaderType) -> do
         infoM "Kage" ("Loading shader " ++ shaderName ++ " as " ++ show shaderType)
         shader <- createShader shaderType
-        vs <- readFileContent ("shaders" </> shaderName)
+        vs <- readFileContentWithImports ("shaders" </> shaderName)
         shaderSourceBS shader $= vs
         compileOk <- compileShader' shaderName shader
         when compileOk $ attachShader program shader
@@ -103,3 +104,17 @@ isValidProgram program = do
     validateProgram program
     get (validateStatus program)
 
+importExpr = RE.mkRegexWithOpts "^\\s*#include\\s+\"(.*)\"" True True
+
+readFileContentWithImports fileName = do
+    let readlines mp f = do
+            debugM "Kage" ("Reading file " ++ f)
+            content <- readFile (maybe f (`replaceFileName` f) mp)
+            concat <$> forM (lines content) (\l -> case RE.matchRegex importExpr l of
+                Just m -> readlines (Just f) (head m)
+                Nothing -> return [l])
+    ls <- readlines Nothing fileName
+    return (Text.encodeUtf8 . Text.pack $ intercalate "\n" ls)
+
+readFileContent :: String -> IO Data.ByteString
+readFileContent fileName = Text.encodeUtf8 . Text.pack <$> readFile fileName

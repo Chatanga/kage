@@ -32,7 +32,8 @@ out vec4 color;
 
 float getVisibility();
 float getVisibility2();
-float getFogFactor(float fogDistance);
+
+#include "fog.glsl"
 
 vec2 poissonDisk[16] = vec2[]( 
    vec2( -0.94201624, -0.39906216 ), 
@@ -120,26 +121,4 @@ float getVisibility2()
         }
     }
     return visibility;
-}
-
-float getFogFactor(float fogDistance)
-{
-    float factor;
-
-    switch (fogEquation) {
-    case 0:
-        factor = (fogEnd - fogDistance) / (fogEnd - fogStart);
-        break;
-    case 1:
-        factor = exp(-fogDensity * fogDistance);
-        break;
-    case 2:
-        factor = exp(-pow(fogDensity * fogDistance, 2.0));
-        break;
-    default:
-        factor = 0.0;
-    }
-    factor = 1.0 - clamp(factor, 0.0, 1.0);
-
-    return factor;
 }
