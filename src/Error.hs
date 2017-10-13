@@ -3,24 +3,24 @@ module Error (
 ) where
 
 import Control.Monad
-import Graphics.GL
+import qualified Graphics.GL as Raw
 
-getErrors :: IO [GLuint]
+getErrors :: IO [Raw.GLuint]
 getErrors = do
-    error <- glGetError
-    if error == GL_NO_ERROR
+    error <- Raw.glGetError
+    if error == Raw.GL_NO_ERROR
         then return []
         else (error:) <$> getErrors
 
-showError :: GLuint-> String
+showError :: Raw.GLuint-> String
 showError error = case error of
-    GL_INVALID_ENUM -> "GL_INVALID_ENUM"
-    GL_INVALID_VALUE -> "GL_INVALID_VALUE"
-    GL_INVALID_OPERATION -> "GL_INVALID_OPERATION"
-    GL_INVALID_FRAMEBUFFER_OPERATION -> "GL_INVALID_FRAMEBUFFER_OPERATION"
-    GL_OUT_OF_MEMORY -> "GL_OUT_OF_MEMORY"
-    GL_STACK_UNDERFLOW -> "GL_STACK_UNDERFLOW"
-    GL_STACK_OVERFLOW -> "GL_STACK_OVERFLOW"
+    Raw.GL_INVALID_ENUM -> "GL_INVALID_ENUM"
+    Raw.GL_INVALID_VALUE -> "GL_INVALID_VALUE"
+    Raw.GL_INVALID_OPERATION -> "GL_INVALID_OPERATION"
+    Raw.GL_INVALID_FRAMEBUFFER_OPERATION -> "GL_INVALID_FRAMEBUFFER_OPERATION"
+    Raw.GL_OUT_OF_MEMORY -> "GL_OUT_OF_MEMORY"
+    Raw.GL_STACK_UNDERFLOW -> "GL_STACK_UNDERFLOW"
+    Raw.GL_STACK_OVERFLOW -> "GL_STACK_OVERFLOW"
     x -> "GL Error " ++ show x
 
 printErrors :: String -> IO ()

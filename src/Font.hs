@@ -25,7 +25,6 @@ import Codec.Picture
 import Codec.Picture.Types
 
 import Graphics.Rendering.OpenGL hiding (bitmap)
-import qualified Graphics.GL as Raw
 
 import Graphics.Rendering.FreeType.Internal
 import Graphics.Rendering.FreeType.Internal.Bitmap (width, rows, pitch, num_grays, pixel_mode, palette_mode, buffer, FT_Bitmap)

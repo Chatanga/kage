@@ -29,6 +29,8 @@ import Numeric (showGFloat)
 import Buffer
 import Debug
 import Error
+import Ext.Program
+import Ext.Shader
 import Font
 import FunctionalGL
 import Geometry
@@ -37,7 +39,6 @@ import Misc
 import Random
 import Shader
 import Texture
-
 import View
 import World
 
@@ -47,7 +48,7 @@ data RenderingMode = ForwardShading | DeferredShading
 
 data Context = Context
     {   contextShadowContext :: (Context3D, TextureObject, (Int, Int))
-    ,   contextDeferredStage :: (Program, Dispose)
+    ,   contextDeferredStage :: (ExtProgram, Dispose)
     ,   contextScreen :: Object3D
     ,   contextGeometryBuffer :: Maybe (FramebufferObject, [TextureObject], Dispose)
     ,   contextCameraName :: String
@@ -303,7 +304,7 @@ shadowStage worldRef contextRef size = do
     cameraMat <- newMatrix RowMajor (flattenMatrix cameraMatrix) :: IO (GLmatrix GLfloat)
     transformation <- newMatrix RowMajor (flattenMatrix identity) :: IO (GLmatrix GLfloat)
 
-    withBinding currentProgram program $ do
+    withBinding currentExtProgram program $ do
         setUniform program "projection" projectionMat
         setUniform program "camera" cameraMat
         setUniform program "transformation" transformation
@@ -389,7 +390,7 @@ display renderingMode worldRef contextRef size = do
             clear [ColorBuffer, DepthBuffer]
             transformation <- newMatrix RowMajor (flattenMatrix identity) :: IO (GLmatrix GLfloat)
 
-            withBinding currentProgram deferredProgram $ do
+            withBinding currentExtProgram deferredProgram $ do
                 setUniform deferredProgram "projection" projectionMat
                 setUniform deferredProgram "camera" cameraMat
                 setUniform deferredProgram "transformation" transformation
@@ -419,12 +420,12 @@ displayBuffer contextRef index size = do
 
     case contextGeometryBuffer context of
         Just (_, textures, _) ->
-            withBinding currentProgram program .
+            withBinding currentExtProgram program .
             withBinding bindVertexArrayObject vao .
             usingOrderedTextures program [pickTexture textures] $
                 render size program
         Nothing ->
-            withBinding currentProgram program .
+            withBinding currentExtProgram program .
             withBinding bindVertexArrayObject vao .
             usingOrderedTextures program [texture] $
                 render size program
@@ -453,7 +454,7 @@ renderObjectInForwardShading
     lights
     (Object3D program vao render _)
     =
-    withBinding bindVertexArrayObject vao . withBinding currentProgram program $ do
+    withBinding bindVertexArrayObject vao . withBinding currentExtProgram program $ do
 
         setUniform program "cameraPosition" cameraPosition
 

@@ -27,6 +27,8 @@ library
         JuicyPixels -any,
         OpenGL -any,
         OpenGLRaw -any,
+        ObjectName -any,
+        StateVar -any,
         filepath -any,
         hslogger -any,
         linear -any,
@@ -50,6 +52,11 @@ library
         Font
         FunctionalGL
         Geometry
+        Ext.Program
+        Ext.Shader
+        Ext.Uniform
+        Ext.Utils
+        Ext.Variables
         Heightmap
         Layouts
         Misc

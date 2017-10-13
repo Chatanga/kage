@@ -10,7 +10,7 @@ import Data.Maybe
 import Data.Tree
 import Data.Tree.Zipper
 
-import qualified Graphics.Rendering.OpenGL as GL
+import Graphics.Rendering.OpenGL
 
 import View
 
@@ -19,7 +19,7 @@ import View
 setBounds position size tree = layoutSetSize (viewLayout (rootLabel tree')) size tree' where
     tree' = setPosition position tree
 
-fixedLayout (GL.Size w h) = Layout
+fixedLayout (Size w h) = Layout
     (const (Just w, Just h))
     setSize
 
@@ -61,18 +61,18 @@ borderLayout positions = undefined -- TODO
 -}
 
 data AnchorConstraint = AnchorConstraint
-    { topDistance :: Maybe GL.GLsizei
-    , rightDistance :: Maybe GL.GLsizei
-    , bottomDistance :: Maybe GL.GLsizei
-    , leftDistance :: Maybe GL.GLsizei
+    { topDistance :: Maybe GLsizei
+    , rightDistance :: Maybe GLsizei
+    , bottomDistance :: Maybe GLsizei
+    , leftDistance :: Maybe GLsizei
     } deriving Show
 
 anchorLayout :: [AnchorConstraint] -> Layout a
 anchorLayout constraints = Layout getter setter where
     getter t = (Nothing, Nothing)
     setter s t = setSize s t{ subForest = zipWith updateChild constraints (subForest t) } where
-        (GL.Size w h) = s
-        updateChild constraint child = setBounds (GL.Position xChild yChild) (GL.Size wChild hChild) child where
+        (Size w h) = s
+        updateChild constraint child = setBounds (Position xChild yChild) (Size wChild hChild) child where
             (mWidth, mHeigh) = layoutGetNaturalSize (viewLayout (rootLabel child)) child
             (xChild, wChild) = case (leftDistance constraint, mWidth, rightDistance constraint) of
                 (Nothing, _, Nothing) -> let iw = fromMaybe w mWidth in ((w - iw) `div` 2, iw) -- centrage
@@ -119,14 +119,14 @@ adaptativeLayout = Layout getter setter where
                 in  if n > 0
                     then
                         let
-                            (GL.Size w h) = s
+                            (Size w h) = s
                             wMaster = w
                             hMaster = (n * h) `div` (n + 1)
                             wSlave = w `div` n
                             hSlave = h - hMaster
-                            master' = setBounds (GL.Position 0 0) (GL.Size wMaster hMaster) master
-                            updateSlave index = setBounds (GL.Position (wSlave * index) hMaster) (GL.Size wSlave hSlave)
+                            master' = setBounds (Position 0 0) (Size wMaster hMaster) master
+                            updateSlave index = setBounds (Position (wSlave * index) hMaster) (Size wSlave hSlave)
                         in
                         t{ subForest = master' : zipWith updateSlave [0..] slaves }
                     else
-                        t{ subForest = [setBounds (GL.Position 0 0) s master] }
+                        t{ subForest = [setBounds (Position 0 0) s master] }

@@ -31,16 +31,19 @@ import qualified Data.Map as Map
 import Data.Maybe
 import Graphics.Rendering.OpenGL
 
+import Ext.Program
+import Ext.Uniform
+
 ----------------------------------------------------------------------------------------------------
 
 -- TODO Virer Size.
-type Render = Size -> Program -> IO ()
+type Render = Size -> ExtProgram -> IO ()
 
 type Dispose = IO ()
 
 -- TODO Renommer en Renderable.
 data Object3D = Object3D
-    {   o3d_program :: !Program
+    {   o3d_program :: !ExtProgram
     ,   o3d_vao :: !VertexArrayObject
     ,   o3d_render :: !Render
     ,   o3d_dispose :: !Dispose
@@ -50,8 +53,8 @@ instance Show Object3D where
     show _ = "<Object3D>"
 
 data Context3D = Context3D
-    {   c3d_program :: Program
-    ,   c3d_render :: Size -> Program -> [Object3D] -> IO ()
+    {   c3d_program :: ExtProgram
+    ,   c3d_render :: Size -> ExtProgram -> [Object3D] -> IO ()
     ,   c3d_dispose :: Dispose
     }
 
@@ -118,9 +121,9 @@ releaseResource repository key = case Map.lookup key repository of
 
 ----------------------------------------------------------------------------------------------------
 
-setUniform :: Uniform a => Program -> String -> a -> IO ()
+setUniform :: Uniform a => ExtProgram -> String -> a -> IO ()
 setUniform program variableName value = do
-    loc <- get (uniformLocation program variableName)
+    loc <- get (extUniformLocation program variableName)
     uniform loc $= value
 
 getAndSet :: StateVar a -> a -> IO a
@@ -158,10 +161,10 @@ withTexture2D texture action = do
     textureBinding Texture2D $= Nothing
     return r
 
-usingOrderedTextures :: Program -> [TextureObject] -> IO () -> IO ()
+usingOrderedTextures :: ExtProgram -> [TextureObject] -> IO () -> IO ()
 usingOrderedTextures program textures = usingTextures program (zip [0..] textures)
 
-usingTextures :: Program -> [(GLuint, TextureObject)] -> IO () -> IO ()
+usingTextures :: ExtProgram -> [(GLuint, TextureObject)] -> IO () -> IO ()
 usingTextures program indexedTextures action = do
     forM_ indexedTextures $ \(i, t) -> do
         let uniformName = if length indexedTextures == 1
