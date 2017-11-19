@@ -22,7 +22,7 @@ better give to Caesar what is Caesar's.
 Technical notes
 ---------------
 
-Despite the OpenGL package (3.0.1.0) stating it supports version 4.5, it is only the case for the underlying raw binding. The higher level Haskell binding seems to lack some features, at least regarding Shaders (compute, separate binding). In order to further explore the OpenGL API, I've introduced a `Ext` module. It cannibalizes a minimal set of hiddem things from the `Graphics.Rendering.OpenGL` package to be able to introduce some changes: `ExtShader`, `ExtProgram`...
+Despite the OpenGL package (3.0.1.0) stating it supports version 4.5, it is only the case for the underlying raw binding. The higher level Haskell binding seems to lack some features, at least regarding Shaders (compute, separate binding). In order to further explore the OpenGL API, I've introduced a `Ext` module. It cannibalizes a minimal set of hidden things from the `Graphics.Rendering.OpenGL` package to be able to introduce some changes: `ExtShader`, `ExtProgram`...
 
 Hardware
 --------

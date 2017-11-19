@@ -13,8 +13,8 @@ module Buffer
     ,   createTerrain130
     ,   createTerrain
     ,   createFlatTerrain
-    ,   createShadowBuffer
-    ,   createGeometryBuffer
+    ,   createShadowFrameBuffer
+    ,   createGeometryFrameBuffer
     ,   flattenMatrix
     ,   flattenVertices
         ---
@@ -48,6 +48,11 @@ import Texture
 
 ----------------------------------------------------------------------------------------------------
 
+{-
+GLSL: layout(location = 0) in vec3 vertexPosition;
+or
+Haskell: attribLocation program "vertexPosition" $= AttribLocation 0
+-}
 pointLocation = 0
 colorLocation = 1
 texCoordLocation = 2
@@ -449,21 +454,21 @@ createFlatTerrain (width, height) =
 
 ----------------------------------------------------------------------------------------------------
 
-createShadowBuffer :: (Int, Int) -> IO (FramebufferObject, TextureObject, Dispose)
-createShadowBuffer (w, h) = do
+createShadowFrameBuffer :: Size -> IO (FramebufferObject, TextureObject, Dispose)
+createShadowFrameBuffer (Size w h) = do
     -- The framebuffer, which regroups 0, 1 or more textures, and 0 or 1 depth buffer.
     fbo <- genObjectName :: IO FramebufferObject
     bindFramebuffer DrawFramebuffer $= fbo
 
-    -- Depth texture. Slower than a depth buffer, but you can sample it later in your shader
+    -- Depth texture. Slower than a depth buffer, but you can sample it later in your shader.
     depthTexture <- genObjectName :: IO TextureObject
     textureBinding Texture2D $= Just depthTexture
     texImage2D
         Texture2D
         NoProxy
         0 -- Mipmap level
-        DepthComponent16
-        (TextureSize2D (fromIntegral w) (fromIntegral h))
+        DepthComponent'
+        (TextureSize2D w h)
         0 -- No borders
         (PixelData DepthComponent Float nullPtr)
     textureWrapMode Texture2D S $= (Repeated, Repeat)
@@ -474,16 +479,7 @@ createShadowBuffer (w, h) = do
     textureCompareMode Texture2D $= Just Lequal
     -}
 
-    framebufferTexture2D DrawFramebuffer DepthAttachment Texture2D depthTexture 0 -- #0
-
-    {-
-    -- The depth buffer
-    depthRenderBuffer <- genObjectName :: IO RenderbufferObject
-    bindRenderbuffer Renderbuffer $= depthRenderBuffer
-    renderbufferStorage Renderbuffer DepthComponent16 (RenderbufferSize 1024 768)
-
-    framebufferRenderbuffer Framebuffer DepthAttachment Renderbuffer depthRenderBuffer
-    -}
+    framebufferTexture2D DrawFramebuffer DepthAttachment Texture2D depthTexture 0
 
     -- No *color* buffer is drawn to.
     drawBuffer $= NoBuffers
@@ -499,10 +495,8 @@ createShadowBuffer (w, h) = do
 
     return (fbo, depthTexture, dispose)
 
-createGeometryBuffer :: (Int, Int) -> IO (FramebufferObject, [TextureObject], Dispose)
-createGeometryBuffer (w, h) = do
-    let (w', h') = (fromIntegral w, fromIntegral h)
-
+createGeometryFrameBuffer :: Size -> IO (FramebufferObject, [TextureObject], Dispose)
+createGeometryFrameBuffer (Size w h) = do
     fbo <- genObjectName :: IO FramebufferObject
     bindFramebuffer DrawFramebuffer $= fbo
 
@@ -513,8 +507,8 @@ createGeometryBuffer (w, h) = do
         Texture2D
         NoProxy
         0 -- Mipmap level
-        RGB16
-        (TextureSize2D w' h')
+        RGB32F -- RGB16 will lead to clamping?
+        (TextureSize2D w h)
         0 -- No borders
         (PixelData RGB Float nullPtr)
     textureFilter Texture2D $= ((Nearest, Nothing), Nearest)
@@ -527,8 +521,8 @@ createGeometryBuffer (w, h) = do
         Texture2D
         NoProxy
         0 -- Mipmap level
-        RGB16
-        (TextureSize2D w' h')
+        RGB32F -- RGB16 will lead to clamping?
+        (TextureSize2D w h)
         0 -- No borders
         (PixelData RGB Float nullPtr)
     textureFilter Texture2D $= ((Nearest, Nothing), Nearest)
@@ -541,10 +535,10 @@ createGeometryBuffer (w, h) = do
         Texture2D
         NoProxy
         0 -- Mipmap level
-        RGBA'
-        (TextureSize2D w' h')
+        RGBA32F -- RGB16 will lead to clamping?
+        (TextureSize2D w h)
         0 -- No borders
-        (PixelData RGBA UnsignedByte nullPtr)
+        (PixelData RGBA Float nullPtr)
     textureFilter Texture2D $= ((Nearest, Nothing), Nearest)
     framebufferTexture2D DrawFramebuffer (ColorAttachment 2) Texture2D albedoAndSpecularTexture 0
 
@@ -554,7 +548,7 @@ createGeometryBuffer (w, h) = do
     -- then also add render buffer object as depth buffer...
     depthRenderBuffer <- genObjectName :: IO RenderbufferObject
     bindRenderbuffer Renderbuffer $= depthRenderBuffer
-    renderbufferStorage Renderbuffer DepthComponent16 (RenderbufferSize w' h')
+    renderbufferStorage Renderbuffer DepthComponent' (RenderbufferSize w h)
     framebufferRenderbuffer Framebuffer DepthAttachment Renderbuffer depthRenderBuffer
 
     -- ...and check for completeness.
@@ -582,9 +576,9 @@ createMultiplexedObject (attrib, attribContent) draw = do
     vbo <- withBinding bindVertexArrayObject vao (createMultiplexedVbo attrib attribContent)
     let jump = sum (map snd attribContent)
         size = fromIntegral (length attrib) `div` jump
-        render _ _ = draw 0 (jump * size)
+        render = withBinding bindVertexArrayObject vao $ draw 0 (jump * size)
 
-    return (vao, render, deleteObjectName vbo >> deleteObjectName vao)
+    return (vao, const render, deleteObjectName vbo >> deleteObjectName vao)
 
 createIndexedMultiplexedObject
     :: ([GLfloat], [(GLuint, GLint)])
@@ -601,13 +595,13 @@ createIndexedMultiplexedObject (attrib, attribContent) indices draw = do
 
         -- L’IBO ne peut être créé sans VAO lié (pourquoi ?)
         indexIbo <- createIbo indices
-        let render _ _ = do
-                -- L’IBO n’est pas lié au VAO (c’est logique).
+        let render = withBinding bindVertexArrayObject vao $ do
+                -- L’IBO *est* lié au VAO (c’est logique... ou pas).
                 bindBuffer ElementArrayBuffer $= Just indexIbo
                 draw (fromIntegral $ length indices) UnsignedInt nullPtr
         return (render, deleteObjectName indexIbo)
 
-    return (vao, render, dispose >> deleteObjectName vao)
+    return (vao, const render, dispose >> deleteObjectName vao)
 
 createMultiplexedVbo :: [GLfloat] -> [(GLuint, GLint)] -> IO BufferObject
 createMultiplexedVbo vertices attribContent = do
@@ -620,14 +614,14 @@ createMultiplexedVbo vertices attribContent = do
         let jump = sum (map snd attribContent)
             offsets = scanl (+) 0 (map snd attribContent)
         forM_ (zip attribContent offsets) $ \((index, size), offset) -> do
-            let pointAttribute = AttribLocation index
+            let attribute = AttribLocation index
                 floatSize = sizeOf (0 :: GLfloat)
                 stride = jump * fromIntegral floatSize
-                ptr = plusPtr nullPtr (fromIntegral offset * floatSize)
+                ptr = nullPtr `plusPtr` (fromIntegral offset * floatSize)
             -- C’est ici que le VAO mémorise son association avec les donnés du VBO "bindé".
             -- (Le binding en lui-même n’intéresse pas le VAO et n’est pas mémorisé par lui.)
-            vertexAttribPointer pointAttribute $= (ToFloat, VertexArrayDescriptor size Float stride ptr)
-            vertexAttribArray pointAttribute $= Enabled
+            vertexAttribPointer attribute $= (ToFloat, VertexArrayDescriptor size Float stride ptr)
+            vertexAttribArray attribute $= Enabled
 
     return vbo
 
@@ -677,16 +671,17 @@ createObject renderMode mPoints mColors mTexCoords mNormals mIndices = do
             Nothing -> return Nothing
 
         case mIndices of
-            Nothing -> return (\_ _  -> drawArrays renderMode 0 (mLength mPoints), doNothing)
+            Nothing -> return (withBinding bindVertexArrayObject vao $ drawArrays renderMode 0 (mLength mPoints), doNothing)
             Just indices -> do
                 indexIbo <- createIbo indices
-                let render _ _ = do
+                let render = do
                         -- L’IBO n’est pas lié au VAO (c’est logique).
                         bindBuffer ElementArrayBuffer $= Just indexIbo
-                        drawElements renderMode (fromIntegral $ length indices) UnsignedInt nullPtr
+                        withBinding bindVertexArrayObject vao $
+                            drawElements renderMode (fromIntegral $ length indices) UnsignedInt nullPtr
                 return (render, deleteObjectName indexIbo)
 
-    return (vao, render, dispose >> deleteObjectName vao)
+    return (vao, const render, dispose >> deleteObjectName vao)
 
 createIbo :: [GLuint] -> IO BufferObject
 createIbo indices = do

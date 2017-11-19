@@ -1,15 +1,12 @@
 #version 400 core
 
 uniform vec4 emissiveColor;
-uniform vec3 sunLightColor;
-uniform vec3 sunLightDirection;
-uniform float sunLightAmbientIntensity;
 
-in vec3 normal;
+in float angleWithCamera;
 
-out vec4 fragColour;
+#include "shared/constants.glsl"
 
 void main() {
-    float diffuseIntensity = max(0.0, dot(normalize(normal), -sunLightDirection));
-    fragColour = emissiveColor * vec4(sunLightColor * (sunLightAmbientIntensity + diffuseIntensity), 1.0);
+    gl_FragColor = mix(emissiveColor, vec4(1, 1, 1, 1), pow(angleWithCamera, 2));
 }
+

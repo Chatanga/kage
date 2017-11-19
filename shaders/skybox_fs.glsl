@@ -3,14 +3,6 @@
 uniform sampler2D samplers[6];
 
 in vec3 texCoord;
-out vec4 color;
-
-vec4 GetTexture(int index);
-
-void main()
-{
-    color = GetTexture(int(texCoord.z));
-}
 
 vec4 GetTexture(int index)
 {
@@ -31,3 +23,9 @@ vec4 GetTexture(int index)
         return texture(samplers[0], texCoord.xy);
     }
 }
+
+void main()
+{
+    gl_FragColor = GetTexture(int(texCoord.z));
+}
+

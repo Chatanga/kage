@@ -1,10 +1,11 @@
 {-# LANGUAGE ExistentialQuantification #-}
 
 module FunctionalGL
-    ( Render
+    ( Stage(..)
+    , ordinal
+    , Render
     , Dispose
-    , Object3D(..)
-    , Context3D(..)
+    , Renderable(..)
     , setUniform
     , getAndSet
     , withState
@@ -13,6 +14,7 @@ module FunctionalGL
     , withTexture2D
     , usingOrderedTextures
     , usingTextures
+    , withDrawFramebuffer
     , TemporaryValue (..)
     , with'
     ) where
@@ -36,30 +38,31 @@ import Ext.Uniform
 
 ----------------------------------------------------------------------------------------------------
 
--- TODO Virer Size.
-type Render = Size -> ExtProgram -> IO ()
+data Stage
+    = ShadowMappingStage
+    | ForwardShadingStage
+    | DeferredShadingStage
+    deriving Eq
+
+ordinal :: Stage -> GLint
+ordinal stage = case stage of
+    ShadowMappingStage -> 1
+    ForwardShadingStage -> 2
+    DeferredShadingStage -> 3
+
+type Render = ExtProgram -> IO ()
 
 type Dispose = IO ()
 
--- TODO Renommer en Renderable.
-data Object3D = Object3D
-    {   o3d_program :: !ExtProgram
-    ,   o3d_vao :: !VertexArrayObject
-    ,   o3d_render :: !Render
-    ,   o3d_dispose :: !Dispose
+data Renderable = Renderable
+    {   renderableProgram :: [(Stage, ExtProgram)] -- ^ Exposed to bind uniforms.
+    ,   renderableVao :: VertexArrayObject -- ^ Exposed, but shouldn't ; only used to display normals.
+    ,   renderableRender :: Render
+    ,   renderableDispose :: Dispose
     }
 
-instance Show Object3D where
-    show _ = "<Object3D>"
-
-data Context3D = Context3D
-    {   c3d_program :: ExtProgram
-    ,   c3d_render :: Size -> ExtProgram -> [Object3D] -> IO ()
-    ,   c3d_dispose :: Dispose
-    }
-
-instance Show Context3D where
-    show _ = "<Context3D>"
+instance Show Renderable where
+    show _ = "<Renderable>"
 
 ----------------------------------------------------------------------------------------------------
 
@@ -177,6 +180,13 @@ usingTextures program indexedTextures action = do
     forM_ indexedTextures $ \(i, t) -> do
         activeTexture $= TextureUnit i
         textureBinding Texture2D $= Nothing
+
+withDrawFramebuffer :: FramebufferObject -> IO () -> IO ()
+withDrawFramebuffer fbo action = do
+    bindFramebuffer DrawFramebuffer $= fbo
+    action
+    -- TODO restore previous instead?
+    bindFramebuffer DrawFramebuffer $= defaultFramebufferObject
 
 ----------------------------------------------------------------------------------------------------
 

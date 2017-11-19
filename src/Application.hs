@@ -90,7 +90,7 @@ runApplication name = do
     uiRef <- newIORef . createUI $
         Node (createSceneView False adaptativeLayout Nothing)
         [   Node (createSceneView True (anchorLayout [AnchorConstraint (Just 50) (Just 50) Nothing Nothing]) (Just masterScene))
-            [   Node (createSceneView False (fixedLayout (GL.Size 150 150)) (Just radarScene)) []
+            [   Node (createSceneView False (fixedLayout (GL.Size 250 250)) (Just radarScene)) []
             ]
         ,   Node (createSceneView False defaultLayout (Just shadowScene)) []
         ,   Node (createSceneView False defaultLayout (Just positionScene)) []
@@ -181,8 +181,9 @@ animateUI frameDuration ui = do
     return $ ui{ uiRoot = root' }
 
 renderViewTree :: GL.Size -> Tree (View (Maybe Scene)) -> IO ()
-renderViewTree (GL.Size screenWidth screenHeigh) tree = do
-    let view = rootLabel tree
+renderViewTree screenSize tree = do
+    let (GL.Size screenWidth screenHeigh) = screenSize
+        view = rootLabel tree
     case viewContent view of
         Just scene -> do
             let (GL.Position x y, GL.Size w h) = viewLocalBounds view
@@ -191,4 +192,4 @@ renderViewTree (GL.Size screenWidth screenHeigh) tree = do
             sceneRender scene (GL.Size w h)
             GL.flush
         _ -> return ()
-    mapM_ (renderViewTree (GL.Size screenWidth screenHeigh)) (subForest tree)
+    mapM_ (renderViewTree screenSize) (subForest tree)

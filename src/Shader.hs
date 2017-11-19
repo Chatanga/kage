@@ -43,17 +43,14 @@ createProgramWithShaders shaderSources = do
         when compileOk $ attachExtShader program shader
         return shader
 
-    {- In VS:
-    attribLocation program "inPosition" $= AttribLocation 0
-    attribLocation program "inColor" $= AttribLocation 1
-    attribLocation program "inTexCoord" $= AttribLocation 2
-    attribLocation program "inNormal" $= AttribLocation 3
+    {- for vertex shaders
+    attribLocation program "xxx" $= AttribLocation N
+    (see AttribLocation in vertexAttribPointer and vertexAttribArray)
     -}
 
-    {- In FS:
-    bindFragDataLocation program "gPosition" $= 0
-    bindFragDataLocation program "gNormal" $= 1
-    bindFragDataLocation program "gAlbedoSpec" $= 2
+    {- for fragment shaders
+    bindFragDataLocation program "xxx" $= N
+    (see ColorAttachment in framebufferTexture2D)
     -}
     linkProgram' program
 
@@ -62,6 +59,7 @@ createProgramWithShaders shaderSources = do
 
     return (program, deleteObjectName program)
 
+-- Work in progress.
 createPipelineWithShaders :: [(String, ShaderType)] -> IO (ExtProgram, Dispose)
 createPipelineWithShaders shaderSources = do
     program <- createExtProgram
@@ -104,7 +102,7 @@ checkShaderCompilation :: String -> ExtShader -> IO Bool
 checkShaderCompilation shaderName shader = do
     compileOk <- get (extCompileStatus shader)
     unless compileOk $ do
-        log <- filter isPrint <$> get (extShaderInfoLog shader)
+        log <- format <$> get (extShaderInfoLog shader)
         errorM "Kage" ("could not compile shader " ++ show shaderName ++ ": " ++ log)
     return compileOk
 
@@ -118,9 +116,12 @@ checkProgramLinking :: ExtProgram -> IO Bool
 checkProgramLinking program = do
     linkOk <- get (extLinkStatus program)
     unless linkOk $ do
-        log <- filter isPrint <$> get (extProgramInfoLog program)
+        log <- format <$> get (extProgramInfoLog program)
         errorM "Kage" ("could not link shader program " ++ show program ++ ": " ++ log)
     return linkOk
+
+format :: String -> String
+format text = intercalate "\n\t" (lines text)
 
 dumpProgram :: ExtProgram -> IO ()
 dumpProgram program = do

@@ -47,10 +47,10 @@ import World
 data RenderingMode = ForwardShading | DeferredShading
 
 data Context = Context
-    {   contextShadowContext :: (Context3D, TextureObject, (Int, Int))
-    ,   contextDeferredStage :: (ExtProgram, Dispose)
-    ,   contextScreen :: Object3D
-    ,   contextGeometryBuffer :: Maybe (FramebufferObject, [TextureObject], Dispose)
+    {   contextScreen :: Renderable
+    ,   contextDeferredScreen :: Renderable
+    ,   contextShadowFrameBuffer :: Maybe (FramebufferObject, TextureObject, Dispose)
+    ,   contextGeometryFrameBuffer :: Maybe (FramebufferObject, [TextureObject], Dispose)
     ,   contextCameraName :: String
     ,   contextCameraMoves :: !(Set.Set Move)
     ,   contextCursorPosition :: V2 Double
@@ -97,7 +97,8 @@ createWorld = do
         , return terrain
         -- , createNormalDisplaying heightmap terrain
         , createGrass heightmap heightmapScale
-        , createSpaceInvader
+        , createSpaceInvader (V3 10 5 25)
+        , createSpaceInvader (V3 20 15 15)
         -- , createTesselatedPyramid
         , createText (V3 10 0 20) (V3 0 0 0.04) (V3 0 (-0.04) 0) "Kage　-　かげ"
         ]
@@ -113,17 +114,16 @@ createWorld = do
 
 disposeWorld :: World -> IO ()
 disposeWorld world =
-    mapM_ o3d_dispose (fst (worldFireBalls world) : worldObjects world)
+    mapM_ renderableDispose (fst (worldFireBalls world) : worldObjects world)
 
 createContext :: IO Context
 createContext = do
-    shadowContext <- createShadowContext :: IO (Context3D, TextureObject, (Int, Int))
-    deferredStage <- createProgramWithShaders' "deferred_stage_vs.glsl" "deferred_stage_fs.glsl"
     screen <- createScreen
+    deferredScreen <- createDeferredScreen
     let context = Context
-            shadowContext
-            deferredStage
             screen
+            deferredScreen
+            Nothing
             Nothing
             "first-camera"
             Set.empty
@@ -133,9 +133,13 @@ createContext = do
 
 disposeContext :: Context -> IO ()
 disposeContext context = do
-    let (c, _, _) = contextShadowContext context
-    c3d_dispose c
-    snd (contextDeferredStage context)
+    renderableDispose (contextScreen context)
+    case contextShadowFrameBuffer context of
+        Just (_, _, dispose) -> dispose
+        Nothing -> return ()
+    case contextGeometryFrameBuffer context of
+        Just (_, _, dispose) -> dispose
+        Nothing -> return ()
 
 ----------------------------------------------------------------------------------------------------
 
@@ -193,8 +197,10 @@ manipulate renderingMode worldRef contextRef size (EventKey k _ ks _)
     -- Dump the shadow map in a PNG on F1.
     | k == GLFW.Key'F1 && ks == GLFW.KeyState'Pressed = do
         context <- get contextRef
-        let (_, depthTexture, shadowMapSize) = contextShadowContext context
-        saveDepthTexture shadowMapSize depthTexture "shadowmap.png"
+        case contextShadowFrameBuffer context of
+            Just (_, depthTexture, _) -> saveDepthTexture (fromIntegral w, fromIntegral h) depthTexture "shadowmap.png"
+                where Size w h = shadowMapSize
+            Nothing -> return ()
         return $ Just (createScene renderingMode worldRef contextRef)
 
     -- Move the camera using WASD keys (note that the keyboard layout is not taken into account).
@@ -261,36 +267,46 @@ manipulate renderingMode worldRef contextRef size _ =
 
 ----------------------------------------------------------------------------------------------------
 
-createShadowContext :: IO (Context3D, TextureObject, (Int, Int))
-createShadowContext = do
-    let (width, heigh) = (4096, 4096)
-    (fbo, depthTexture, disposeFramebuffer) <- createShadowBuffer (width, heigh)
-    -- In fragment shaders:
-    -- layout(location = 0) out vec3 color;
-    (program, disposeProgram) <- createProgramWithShaders' "shadow_vs.glsl" "shadow_fs.glsl"
+useShadowMap = True
+shadowMapSize = Size 4096 4096
 
-    let size = Size (fromIntegral width) (fromIntegral heigh)
-        render realSize program objects = do
-            backupViewport <- get viewport
-            viewport $= (Position 0 0, size)
-            bindFramebuffer DrawFramebuffer $= fbo
-            clear [DepthBuffer]
-            cullFace $= Nothing
-            frontFace $= CW
-            forM_ objects $ \(Object3D _ vao render _) ->
-                withBinding bindVertexArrayObject vao $
-                render size program
-            viewport $= backupViewport
-            bindFramebuffer DrawFramebuffer $= defaultFramebufferObject
-
-    return (Context3D program render (disposeProgram >> disposeFramebuffer), depthTexture, (width, heigh))
-
-shadowStage :: IORef World -> IORef Context -> Size -> IO (GLmatrix GLfloat, TextureObject)
-shadowStage worldRef contextRef size = do
+display :: RenderingMode -> IORef World -> IORef Context -> Size -> IO ()
+display renderingMode worldRef contextRef size = do
     world <- get worldRef
+
+    let completeRenderer (Renderable programs vao render dispose) (FireBall p d (Color3 cx cy cz) a) = do
+            transformation <- newMatrix RowMajor (flattenMatrix (mkTransformation noRotation p)) :: IO (GLmatrix GLfloat)
+            let render' p = do
+                    setUniform p "transformation" transformation
+                    setUniform p "emissiveColor" (Color4 cx cy cz 1.0)
+                    render p
+            return (Renderable programs vao render' dispose)
+        (fireBallObject, fireBalls) = worldFireBalls world
+
+    fireBallObjects <- mapM (completeRenderer fireBallObject) fireBalls
+
+    let lights = map (\(FireBall p d c a) -> PointLight p c) fireBalls
+        objects = worldObjects world ++ fireBallObjects
+        elapsedTime = worldElapsedTime world
+
+    shadowInfo <- if useShadowMap
+        then Just <$> renderShadow world contextRef shadowMapSize objects
+        else return Nothing
+
+    renderScene renderingMode world contextRef size shadowInfo lights objects
+
+    printErrors "Errors"
+
+renderShadow
+    :: World
+    -> IORef Context
+    -> Size
+    -> [Renderable]
+    -> IO (GLmatrix GLfloat, TextureObject)
+renderShadow world contextRef size objects = do
     context <- get contextRef
-    let (Context3D program render _, shadowMap, _) = contextShadowContext context
-        camera = fromJust (lookup (contextCameraName context) (worldCameras world))
+
+    let camera = fromJust (lookup (contextCameraName context) (worldCameras world))
         sun = worldSun world
         r = far / 8
         projectionMatrix = Linear.ortho (-r * 2) (r * 2) (-r) r (-r) r
@@ -299,46 +315,82 @@ shadowStage worldRef contextRef size = do
             (cameraPosition camera)
             (getUp camera)
             :: M44 GLfloat
-
-    projectionMat <- newMatrix RowMajor (flattenMatrix projectionMatrix) :: IO (GLmatrix GLfloat)
-    cameraMat <- newMatrix RowMajor (flattenMatrix cameraMatrix) :: IO (GLmatrix GLfloat)
-    transformation <- newMatrix RowMajor (flattenMatrix identity) :: IO (GLmatrix GLfloat)
-
-    withBinding currentExtProgram program $ do
-        setUniform program "projection" projectionMat
-        setUniform program "camera" cameraMat
-        setUniform program "transformation" transformation
-        render size program (worldObjects world)
-
-    let biasMatrix = V4
+        biasMatrix = V4
             (V4 0.5 0.0 0.0 0.5)
             (V4 0.0 0.5 0.0 0.5)
             (V4 0.0 0.0 0.5 0.5)
             (V4 0.0 0.0 0.0 1.0)
         shadowMatrix = biasMatrix !*! projectionMatrix !*! cameraMatrix
-    shadow <- newMatrix RowMajor (flattenMatrix shadowMatrix)
 
-    return (shadow, shadowMap)
+    projectionMat <- newMatrix RowMajor (flattenMatrix projectionMatrix)
+    cameraMat <- newMatrix RowMajor (flattenMatrix cameraMatrix)
 
-display :: RenderingMode -> IORef World -> IORef Context -> Size -> IO ()
-display renderingMode worldRef contextRef size = do
-    world <- get worldRef
+    case contextShadowFrameBuffer context of
+        Just (_, _, disposeFramebuffer) -> disposeFramebuffer
+        Nothing -> return ()
+    (fbo, texture, disposeFramebuffer) <- createShadowFrameBuffer size
+    contextRef $= context{ contextShadowFrameBuffer = Just (fbo, texture, disposeFramebuffer) }
+
+    backupViewport <- get viewport
+    viewport $= (Position 0 0, size)
+    withDrawFramebuffer fbo $ do
+        clear [DepthBuffer]
+        cullFace $= Nothing
+        frontFace $= CW
+        forM_ objects $ renderObjectShadow
+            size
+            (worldElapsedTime world)
+            projectionMat
+            cameraMat
+            texture
+    viewport $= backupViewport
+
+    shadowMat <- newMatrix RowMajor (flattenMatrix shadowMatrix)
+    return (shadowMat, texture)
+
+renderObjectShadow
+    :: Size
+    -> Double
+    -> GLmatrix GLfloat
+    -> GLmatrix GLfloat
+    -> TextureObject
+    -> Renderable
+    -> IO ()
+renderObjectShadow
+    size
+    elapsedTime
+    projection
+    camera
+    shadowTexture
+    (Renderable programs vao render _)
+    = case lookup ShadowMappingStage programs of
+        Nothing -> return ()
+        Just program -> withBinding currentExtProgram program $ do
+            setUniform program "camera" camera
+            setUniform program "projection" projection
+            transformation <- newMatrix RowMajor (flattenMatrix identity) :: IO (GLmatrix GLfloat)
+            setUniform program "transformation" transformation
+            setUniform program "timePassed" (F.double2Float elapsedTime :: GLfloat)
+            setUniform program "stage" (ordinal ShadowMappingStage)
+            render program
+
+renderScene
+    :: RenderingMode
+    -> World
+    -> IORef Context
+    -> Size
+    -> Maybe (GLmatrix GLfloat, TextureObject)
+    -> [PointLight]
+    -> [Renderable]
+    -> IO ()
+renderScene renderingMode world contextRef size shadowInfo lights objects = do
     context <- get contextRef
 
-    shadowInfo <- Just <$> shadowStage worldRef contextRef size
-    -- let shadowInfo = Nothing
-
-    -- clearColor $= Color4 0 0 0 1.0
-    -- clear [ColorBuffer, DepthBuffer]
-    cullFace $= Just Back
-    frontFace $= CW
-    depthFunc $= Just Less
-
-    let (Size width height) = size
+    let (Size width heigh) = size
         camera = fromJust (lookup (contextCameraName context) (worldCameras world))
         camPosition = Vector3 cx cy cz where V3 cx cy cz = cameraPosition camera
         -- FOV (y direction, in radians), Aspect ratio, Near plane, Far plane
-        projectionMatrix = Linear.perspective (cameraFov camera) (width `divR` height) near far
+        projectionMatrix = Linear.perspective (cameraFov camera) (width `divR` heigh) near far
         -- Eye, Center, Up
         cameraMatrix = Linear.lookAt
             (cameraPosition camera)
@@ -348,91 +400,70 @@ display renderingMode worldRef contextRef size = do
     projectionMat <- newMatrix RowMajor (flattenMatrix projectionMatrix)
     cameraMat <- newMatrix RowMajor (flattenMatrix cameraMatrix)
 
-    let setLocation (Object3D program vao render dispose) (FireBall p d (Color3 cx cy cz) a) = do
-            transformation <- newMatrix RowMajor (flattenMatrix (mkTransformation noRotation p)) :: IO (GLmatrix GLfloat)
-            let render' s p = do
-                    setUniform p "transformation" transformation
-                    setUniform p "emissiveColor" (Color4 cx cy cz 1.0)
-                    render s p
-            return (Object3D program vao render' dispose)
-
-    let (fireBallObject, fireBalls) = worldFireBalls world
-    fireBallObjects <- mapM (setLocation fireBallObject) fireBalls
-    let toLight (FireBall p d c a) = PointLight p c
-        elapsedTime = worldElapsedTime world
-        renderObject = renderObjectInForwardShading
+    let isRenderableIn stage (Renderable programs vao render _) = isJust (lookup stage programs)
+        renderObjectIn = renderObject
             size
-            elapsedTime
+            (worldElapsedTime world)
             shadowInfo
             camPosition
             projectionMat
             cameraMat
             (worldSun world)
+            lights
+
+    -- clearColor $= Color4 0.5 0.5 1.0 1.0
+    -- clear [ColorBuffer, DepthBuffer]
+    cullFace $= Just Back
+    frontFace $= CW
+    depthFunc $= Just Less
+    -- clampColor ClampReadColor $= ClampOff
 
     case renderingMode of
-        ForwardShading ->
-            mapM_ (renderObject (map toLight fireBalls)) (worldObjects world ++ fireBallObjects)
-        DeferredShading -> do
-            -- In fragment shaders:
-            -- layout (location = 0) out vec3 position;
-            -- layout (location = 1) out vec3 normal;
-            -- layout (location = 2) out vec4 albedoAndSpecular;
-            let (deferredProgram, _) = contextDeferredStage context
 
-            case contextGeometryBuffer context of
+        ForwardShading ->
+            mapM_ (renderObjectIn ForwardShadingStage) objects
+
+        DeferredShading -> do
+            case contextGeometryFrameBuffer context of
                 Just (_, _, disposeFramebuffer) -> disposeFramebuffer
                 Nothing -> return ()
-            (fbo, textures, disposeFramebuffer) <- createGeometryBuffer (fromIntegral width, fromIntegral height)
-            contextRef $= context{ contextGeometryBuffer = Just (fbo, textures, disposeFramebuffer) }
+            (fbo, textures, disposeFramebuffer) <- createGeometryFrameBuffer size
+            contextRef $= context{ contextGeometryFrameBuffer = Just (fbo, textures, disposeFramebuffer) }
 
-            bindFramebuffer DrawFramebuffer $= fbo
+            backupViewport <- get viewport
+            viewport $= (Position 0 0, size)
+            withDrawFramebuffer fbo $ do
+                clearColor $= Color4 0 0 0 1
+                depthFunc $= Just Less
+                -- clampColor ClampReadColor $= ClampOff
+                clear [ColorBuffer, DepthBuffer]
+                mapM_ (renderObjectIn DeferredShadingStage) objects
+            viewport $= backupViewport
 
-            clear [ColorBuffer, DepthBuffer]
-            transformation <- newMatrix RowMajor (flattenMatrix identity) :: IO (GLmatrix GLfloat)
+            let (Renderable programs vao render dispose) = contextDeferredScreen context
+                render' p = usingOrderedTextures p textures (render p)
+            renderObjectIn ForwardShadingStage (Renderable programs vao render' dispose)
 
-            withBinding currentExtProgram deferredProgram $ do
-                setUniform deferredProgram "projection" projectionMat
-                setUniform deferredProgram "camera" cameraMat
-                setUniform deferredProgram "transformation" transformation
-                forM_ (worldObjects world ++ fireBallObjects) $
-                    \(Object3D _ vao render _) -> withBinding bindVertexArrayObject vao $
-                        render size deferredProgram
+            {-
+            In https://learnopengl.com/#!Advanced-Lighting/Deferred-Shading:
+            What we need to do is first copy the depth information stored in the geometry pass into
+            the default framebuffer's depth buffer and only then render the light cubes. This way
+            the light cubes' fragments are only rendered when on top of the previously rendered
+            geometry.
+            -}
+            bindFramebuffer ReadFramebuffer $= fbo
+            clear [DepthBuffer]
+            let (Position dx dy) = fst backupViewport
+            blitFramebuffer
+                (Position 0 0) (Position width heigh)
+                (Position dx dy) (Position (dx + width) (dy + heigh))
+                [DepthBuffer'] Nearest
+            bindFramebuffer Framebuffer $= defaultFramebufferObject
 
-            bindFramebuffer DrawFramebuffer $= defaultFramebufferObject
+            mapM_ (renderObjectIn ForwardShadingStage)
+                (filter (not . isRenderableIn DeferredShadingStage) objects)
 
-            mapM_ (renderObject (map toLight fireBalls)) (worldObjects world ++ fireBallObjects)
-
-    let cursor = contextCursorPosition context
-        target = toWorld size cursor projectionMatrix cameraMatrix
-
-    printErrors "Errors"
-    -- displayText size (stateFont state) (showV2 cursor ++ " -> " ++ showV4 target)
-
-displayBuffer :: IORef Context -> Int -> Size -> IO ()
-displayBuffer contextRef index size = do
-    context <- get contextRef
-
-    let (Object3D program vao render _) = contextScreen context
-        (_, texture, _) = contextShadowContext context
-        pickTexture textures = if index < length textures
-            then textures !! index
-            else texture
-
-    case contextGeometryBuffer context of
-        Just (_, textures, _) ->
-            withBinding currentExtProgram program .
-            withBinding bindVertexArrayObject vao .
-            usingOrderedTextures program [pickTexture textures] $
-                render size program
-        Nothing ->
-            withBinding currentExtProgram program .
-            withBinding bindVertexArrayObject vao .
-            usingOrderedTextures program [texture] $
-                render size program
-
-    printErrors "Errors"
-
-renderObjectInForwardShading
+renderObject
     :: Size
     -> Double
     -> Maybe (GLmatrix GLfloat, TextureObject)
@@ -441,9 +472,10 @@ renderObjectInForwardShading
     -> GLmatrix GLfloat
     -> DirectionLight
     -> [PointLight]
-    -> Object3D
+    -> Stage
+    -> Renderable
     -> IO ()
-renderObjectInForwardShading
+renderObject
     size
     elapsedTime
     shadowInfo
@@ -452,49 +484,88 @@ renderObjectInForwardShading
     camera
     sun
     lights
-    (Object3D program vao render _)
-    =
-    withBinding bindVertexArrayObject vao . withBinding currentExtProgram program $ do
+    stage
+    (Renderable programs vao render _)
+    = case lookup stage programs of
+        Nothing -> return ()
+        Just program -> withBinding currentExtProgram program $ do
 
-        setUniform program "cameraPosition" cameraPosition
+            setUniform program "cameraPosition" cameraPosition
 
-        setUniform program "projection" projection
-        setUniform program "camera" camera
-        transformation <- newMatrix RowMajor (flattenMatrix identity) :: IO (GLmatrix GLfloat)
-        setUniform program "transformation" transformation
+            setUniform program "projection" projection
+            setUniform program "camera" camera
+            transformation <- newMatrix RowMajor (flattenMatrix identity) :: IO (GLmatrix GLfloat)
+            setUniform program "transformation" transformation
 
-        setUniform program "emissiveColor" (Color4 1 1 1 1 :: Color4 GLfloat)
+            setUniform program "sunLightColor" (directionLightColor sun)
+            setUniform program "sunLightDirection" (toVector3 $ directionLightDirection sun)
+            setUniform program "sunLightAmbientIntensity" (directionLightAmbientIntensity sun)
 
-        setUniform program "sunLightColor" (directionLightColor sun)
-        setUniform program "sunLightDirection" (toVector3 $ directionLightDirection sun)
-        setUniform program "sunLightAmbientIntensity" (directionLightAmbientIntensity sun)
+            setUniform program "fogColor" (Color4 (144/255) (142/255) (137/255) 1 :: Color4 GLfloat)
+            setUniform program "fogStart" (50 :: GLfloat)
+            setUniform program "fogEnd" (250 :: GLfloat)
+            setUniform program "fogDensity" (0.005 :: GLfloat)
+            setUniform program "fogEquation" (2 :: GLint) -- 0 = linear, 1 = exp, 2 = exp2
 
-        setUniform program "fogColor" (Color4 (144/255) (142/255) (137/255) 1 :: Color4 GLfloat)
-        setUniform program "fogStart" (50 :: GLfloat)
-        setUniform program "fogEnd" (250 :: GLfloat)
-        setUniform program "fogDensity" (0.005 :: GLfloat)
-        setUniform program "fogEquation" (2 :: GLint) -- 0 = linear, 1 = exp, 2 = exp2
+            setUniform program "lightCount" (fromIntegral (length lights) :: GLint)
+            forM_ (zip [0..] lights) $ \(index, PointLight (V3 x y z) (Color3 r g b)) -> do
+                setUniform program ("lightPositions[" ++ show index ++ "]") (Vector3 x y z)
+                setUniform program ("lightColors[" ++ show index ++ "]") (Color3 r g b)
 
-        setUniform program "lightCount" (fromIntegral (length lights) :: GLint)
-        forM_ (zip [0..] lights) $ \(index, PointLight (V3 x y z) (Color3 r g b)) -> do
-            setUniform program ("lightPositions[" ++ show index ++ "]") (Vector3 x y z)
-            setUniform program ("lightColors[" ++ show index ++ "]") (Color3 r g b)
+            setUniform program "materialSpecularIntensity" (0 :: GLfloat)
+            setUniform program "materialSpecularPower" (0 :: GLfloat)
 
-        setUniform program "materialSpecularIntensity" (5 :: GLfloat)
-        setUniform program "materialSpecularPower" (20 :: GLfloat)
+            setUniform program "timePassed" (F.double2Float elapsedTime :: GLfloat)
+            setUniform program "stage" (ordinal stage)
 
-        setUniform program "timePassed" (F.double2Float elapsedTime :: GLfloat)
+            let contextualizeAction = case shadowInfo of
+                    Just (shadow, shadowMap) -> \action p -> do
+                        let shadowSampler = TextureUnit 8
+                        activeTexture $= shadowSampler
+                        textureBinding Texture2D $= Just shadowMap
+                        setUniform p "shadowMap" shadowSampler
+                        setUniform p "shadow" shadow
+                        setUniform p "shadowUsed" (1 :: GLint)
+                        action p
+                        activeTexture $= shadowSampler
+                        textureBinding Texture2D $= Nothing
+                    Nothing -> \action p -> do
+                        setUniform p "useShadow" (0 :: GLint)
+                        action p
 
-        let contextualizeAction = case shadowInfo of
-                Just (shadow, shadowMap) -> \action -> do
-                    let shadowSampler = TextureUnit 8
-                    activeTexture $= shadowSampler
-                    textureBinding Texture2D $= Just shadowMap
-                    setUniform program "shadowMap" shadowSampler
-                    setUniform program "shadow" shadow
-                    action
-                    activeTexture $= shadowSampler
-                    textureBinding Texture2D $= Nothing
-                Nothing -> id
+            contextualizeAction render program
 
-        contextualizeAction (render size program)
+----------------------------------------------------------------------------------------------------
+
+displayBuffer :: IORef Context -> Int -> Size -> IO ()
+displayBuffer contextRef index size = do
+    context <- get contextRef
+
+    let (Renderable programs vao render _) = contextScreen context
+
+        defaultTexture = case contextShadowFrameBuffer context of
+            Just (_, texture, _) -> Just texture
+            Nothing -> Nothing
+
+        pickTexture :: [TextureObject] -> Maybe TextureObject
+        pickTexture textures = if index < length textures
+            then Just (textures !! index)
+            else defaultTexture
+
+        renderTexture :: TextureObject -> IO ()
+        renderTexture texture = case lookup ForwardShadingStage programs of
+            Nothing -> return ()
+            Just program -> withBinding currentExtProgram program .
+                usingOrderedTextures program [texture] $
+                    render program
+
+    case contextGeometryFrameBuffer context of
+        Just (_, textures, _) -> case pickTexture textures of
+            Just texture -> renderTexture texture
+            Nothing -> return ()
+        Nothing -> case defaultTexture of
+            Just texture -> renderTexture texture
+            Nothing -> return ()
+
+    printErrors "Errors"
+

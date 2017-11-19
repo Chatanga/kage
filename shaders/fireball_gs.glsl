@@ -7,7 +7,7 @@ uniform mat4 transformation;
 layout(triangles) in;
 layout(triangle_strip, max_vertices = 64) out;
 
-out vec3 normal;
+out float angleWithCamera;
 
 void divide2(vec3 p0, vec3 p1, vec3 p2);
 void emitVertex(vec3 vertex);
@@ -69,7 +69,14 @@ void divide2(vec3 p0, vec3 p1, vec3 p2) {
 }
 
 void emitVertex(vec3 vertex) {
-    gl_Position = projection * camera * transformation * vec4(normalize(vertex), 1.0);
-    normal = normalize(transformation * vec4(vertex, 0.0)).xyz;
+    vec3 v = normalize(vertex);
+
+    gl_Position = projection * camera * transformation * vec4(v, 1.0);
+
+    vec3 p = normalize(camera * transformation * vec4(v, 1.0)).xyz;
+    vec3 n = normalize(camera * transformation * vec4(v, 0.0)).xyz;
+    angleWithCamera = dot(n, -p);
+
     EmitVertex();
 }
+

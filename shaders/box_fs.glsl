@@ -1,8 +1,23 @@
 #version 400 core
 
-in vec3 colour;
-out vec4 fragColour;
+uniform vec3 cameraPosition;
 
-void main() {
-    fragColour = vec4(colour, 0.25);
+uniform float materialSpecularIntensity;
+uniform float materialSpecularPower;
+
+uniform sampler2D sampler;
+
+in vec2 texCoord;
+in vec3 normal;
+in vec4 worldSpacePosition;
+in vec4 cameraSpacePosition;
+
+#include "shared/constants.glsl"
+#include "shared/lighting.glsl"
+
+void main()
+{
+    vec4 baseColor = texture(sampler, texCoord);
+    gl_FragColor = getFragColor(materialSpecularIntensity, materialSpecularPower, baseColor, normal, cameraSpacePosition, worldSpacePosition);
 }
+

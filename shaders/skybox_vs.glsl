@@ -17,3 +17,4 @@ void main() {
     gl_Position = projection * centerCamera * vec4(inPosition, 1.0);
     texCoord = inTexCoord;
 }
+

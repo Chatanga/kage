@@ -4,11 +4,12 @@ layout(points) in;
 layout(triangle_strip) out;
 layout(max_vertices = 12) out;
 
-uniform mat4 shadow;
-
 uniform mat4 projection;
 uniform mat4 camera;
 uniform mat4 transformation;
+
+uniform int shadowUsed;
+uniform mat4 shadow;
 
 uniform float timePassed;
 
@@ -17,6 +18,8 @@ out vec4 worldSpacePosition;
 out vec4 shadowCoord;
 out vec4 cameraSpacePosition;
 flat out int textureIndex;
+
+#include "shared/constants.glsl"
 
 mat4 rotationMatrix(vec3 axis, float angle)
 {
@@ -33,7 +36,7 @@ mat4 rotationMatrix(vec3 axis, float angle)
 
 vec3 localSeed;
 
-// This function returns random number from zero to one
+// This function returns random number from zero to one.
 float randZeroOne()
 {
     uint n = floatBitsToUint(localSeed.y * 214013.0 + localSeed.x * 2531011.0 + localSeed.z * 141251.0);
@@ -71,7 +74,7 @@ void main()
 
     mat4 mvp = projection * camera * transformation;
 
-    float PIover180 = 3.1415/180.0;
+    float PIover180 = PI/180.0;
     vec3 baseDir[3];
     baseDir[0] = vec3(1.0, 0.0, 0.0);
     baseDir[1] = vec3(float(cos(60.0 * PIover180)), float(sin(60.0 * PIover180)), 0.0f);
@@ -124,3 +127,4 @@ void main()
         EndPrimitive();
     }
 }
+

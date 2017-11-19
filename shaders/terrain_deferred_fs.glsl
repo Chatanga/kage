@@ -1,19 +1,19 @@
 #version 400 core
 
-uniform vec3 cameraPosition;
-
 uniform float materialSpecularIntensity;
 uniform float materialSpecularPower;
 
 uniform sampler2D samplers[3];
 
+in vec4 worldSpacePosition;
 in vec2 texCoord;
 in vec3 normal;
-in vec4 worldSpacePosition;
-in vec4 cameraSpacePosition;
+
+layout(location = 0) out vec3 outPosition;
+layout(location = 1) out vec3 outNormal;
+layout(location = 2) out vec4 outAlbedoSpec;
 
 #include "shared/constants.glsl"
-#include "shared/lighting.glsl"
 
 void main()
 {
@@ -38,6 +38,9 @@ void main()
         baseColor = baseColor2;
     }
 
-    gl_FragColor = getFragColor(materialSpecularIntensity, materialSpecularPower, baseColor, normal, cameraSpacePosition, worldSpacePosition);
+    outPosition = worldSpacePosition.xyz;
+    outNormal = normal;
+    outAlbedoSpec.rgb = baseColor.rgb;
+    outAlbedoSpec.a = materialSpecularIntensity;
 }
 

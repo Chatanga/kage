@@ -46,7 +46,7 @@ import Buffer
 
 ----------------------------------------------------------------------------------------------------
 
-createText :: LP.V3 Float -> LP.V3 Float -> LP.V3 Float -> String -> IO Object3D
+createText :: LP.V3 Float -> LP.V3 Float -> LP.V3 Float -> String -> IO Renderable
 createText position up advance text = do
     atlas <- getAtlas
 
@@ -58,7 +58,7 @@ createText position up advance text = do
             [b', e', l', t', w', r'] = map fromIntegral [b, e, l, t, w, r]
             p' = p ^+^ ((w' - l') *^ advance)
             p1 = p ^-^ (l' *^ advance) ^+^ (up ^* t')
-            p2 = p1 ^+^ (w' *^advance)
+            p2 = p1 ^+^ (w' *^ advance)
             p3 = p2 ^-^ (up ^* r')
             p4 = p1 ^-^ (up ^* r')
             triangles = flattenVertices [p1, p2, p3, p1, p3, p4]
@@ -77,14 +77,14 @@ createText position up advance text = do
 
     (program, disposeProgram) <- createProgramWithShaders' "letter_vs.glsl" "letter_fs.glsl"
 
-    let render' s p =
+    let render' p =
             usingOrderedTextures p [texture] .
                 withState blend Enabled .
                 withState blendFunc (SrcAlpha, OneMinusSrcAlpha) .
                 withState depthMask Disabled .
-                withState cullFace Nothing $ render s p
+                withState cullFace Nothing $ render p
 
-    return (Object3D program vao render' (dispose >> disposeProgram >> disposeTexture))
+    return (Renderable [(ForwardShadingStage, program)] vao render' (dispose >> disposeProgram >> disposeTexture))
 
 ----------------------------------------------------------------------------------------------------
 
