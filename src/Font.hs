@@ -64,7 +64,7 @@ createText position up advance text = do
             triangles = flattenVertices [p1, p2, p3, p1, p3, p4]
             texCoords = map ((/ 2048) . fromIntegral) [b, e, b+w, e, b+w, e+r, b, e, b+w, e+r, b, e+r]
 
-    (vao, render, dispose) <- createObject Triangles (Just triangles) Nothing (Just texCoords) Nothing Nothing
+    (vao, render, dispose) <- createObject Triangles (Just triangles) Nothing (Just texCoords) Nothing Nothing Nothing
     -- loadImage "atlas.png"
     Just (texture, disposeTexture) <- withLoadedImage "data/atlas.png" $ \t -> do
         generateMipmap' Texture2D

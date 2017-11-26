@@ -57,6 +57,7 @@ pointLocation = 0
 colorLocation = 1
 texCoordLocation = 2
 normalLocation = 3
+tangentLocation = 4
 
 createSphere :: Int -> IO (VertexArrayObject, Render, Dispose)
 createSphere depth = do
@@ -127,6 +128,8 @@ createSquare (dx, dy) s = createObject Triangles
         ])
     -- Normals
     Nothing
+    -- Tangents
+    Nothing
     -- Indices
     Nothing
 
@@ -152,6 +155,8 @@ createIndexedPyramid = createObject Triangles
     Nothing
     -- Normals
     Nothing
+    -- Tangents
+    Nothing
     -- Indices
     (Just
         [ 0, 1, 2
@@ -171,6 +176,8 @@ createPatchPyramid = createObject Patches
         -- Texture coordinates
         Nothing
         -- Normals
+        Nothing
+        -- Tangents
         Nothing
         -- Indices
         Nothing
@@ -230,7 +237,7 @@ createBox edgeSize = do
             , 2, 6, 4
             , 2, 4, 0
             ]
-    createObject Triangles (Just triangles) (Just colors) Nothing Nothing Nothing
+    createObject Triangles (Just triangles) (Just colors) Nothing Nothing Nothing Nothing
 
 createTexturedBox :: GLfloat -> IO (VertexArrayObject, Render, Dispose)
 createTexturedBox edgeSize = do
@@ -257,13 +264,37 @@ createTexturedBox edgeSize = do
             , 2, 6, 4
             , 2, 4, 0
             ]
-        normals = flattenVertices (extractTriangleNormals (unflattenVertices3 triangles))
-    createObject Triangles (Just triangles) Nothing (Just texCoords) (Just normals) Nothing
+        normals = flattenVertices (extractQuadNormals (unflattenVertices3 triangles))
+        tangents = flattenVertices (extractQuadTangents (unflattenVertices3 triangles))
+    createObject Triangles (Just triangles) Nothing (Just texCoords) (Just normals) (Just tangents) Nothing
 
-extractTriangleNormals :: [V3 GLfloat] -> [V3 GLfloat]
-extractTriangleNormals [] = []
-extractTriangleNormals (p1 : p2 : p3 : ps) = replicate 3 n ++ extractTriangleNormals ps where
-    n = - LP.normalize (LP.cross (p2 - p1) (p3 - p2))
+{-
+   (V)
+
+    ^
+    | p1'   p3'
+ p1 +------+
+    |\     |
+    | \    |      n is pointing out
+    |  \   |        of the screen
+  b |   \  |
+    |    \ |
+    |     \| p2'
+  --+------+---------> (U)
+ p2 |  t   p3
+
+-}
+extractQuadNormals :: [V3 GLfloat] -> [V3 GLfloat]
+extractQuadNormals [] = []
+extractQuadNormals (p1 : p2 : p3 : _ : _ : _ : ps) = replicate 6 n ++ extractQuadNormals ps where
+    t = p3 - p2 -- tangent
+    b = p1 - p2 -- bitangent
+    n = LP.normalize (LP.cross b t) -- normal (right-handed cross product)
+
+extractQuadTangents :: [V3 GLfloat] -> [V3 GLfloat]
+extractQuadTangents [] = []
+extractQuadTangents (p1 : p2 : p3 : _ : _ : _ : ps) = replicate 6 t ++ extractQuadTangents ps where
+    t = LP.normalize (p3 - p2)
 
 createTexturedSkyBox :: GLfloat -> IO (VertexArrayObject, Render, Dispose)
 createTexturedSkyBox edgeSize = do
@@ -292,7 +323,7 @@ createTexturedSkyBox edgeSize = do
             , 2, 6, 4
             , 2, 4, 0
             ]
-    createObject Triangles (Just triangles) Nothing (Just texCoords) Nothing Nothing
+    createObject Triangles (Just triangles) Nothing (Just texCoords) Nothing Nothing Nothing
 
 createTexturedMesh :: IO (VertexArrayObject, Render, Dispose)
 createTexturedMesh = do
@@ -631,9 +662,10 @@ createObject
     -> Maybe [GLfloat]
     -> Maybe [GLfloat]
     -> Maybe [GLfloat]
+    -> Maybe [GLfloat]
     -> Maybe [GLuint]
     -> IO (VertexArrayObject, Render, Dispose)
-createObject renderMode mPoints mColors mTexCoords mNormals mIndices = do
+createObject renderMode mPoints mColors mTexCoords mNormals mTangents mIndices = do
     vao <- genObjectName
     (render, dispose) <- withBinding bindVertexArrayObject vao $ do
 
@@ -668,6 +700,10 @@ createObject renderMode mPoints mColors mTexCoords mNormals mIndices = do
 
         case mNormals of
             Just normals -> Just <$> createVbo 3 normals normalLocation
+            Nothing -> return Nothing
+
+        case mTangents of
+            Just tangents -> Just <$> createVbo 3 tangents tangentLocation
             Nothing -> return Nothing
 
         case mIndices of

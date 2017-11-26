@@ -8,6 +8,7 @@ module World (
     createSpaceInvader,
     createFireBall,
     createRenderableTerrain,
+    createHeightmapNormalDisplaying,
     createNormalDisplaying,
     createGrass,
     createRenderableBoxSet,
@@ -101,7 +102,7 @@ animateWorld timeDelta world = return world' where
     sun = worldSun world
     sun' = sun
         { directionLightDirection = Linear.rotate
-            (axisAngle (V3 0 0 1) (realToFrac timeDelta / 2))
+            (axisAngle (V3 0 0 1) (realToFrac timeDelta / 4))
             (directionLightDirection sun)
         }
 
@@ -109,7 +110,7 @@ animateWorld timeDelta world = return world' where
 
     world' = world
         { worldFireBalls = fireBalls
-        , worldSun = sun'
+        , worldSun = sun
         , worldElapsedTime = elapsedTime
         }
 
@@ -181,9 +182,12 @@ createRenderableTerrain heightmap scale = do
 
     return (Renderable programs vao render' disposeAll)
 
-createNormalDisplaying :: Heightmap Float -> Renderable -> IO Renderable
-createNormalDisplaying (w, h, _) (Renderable _ vao _ _) = do
-    let render p = withBinding bindVertexArrayObject vao $ drawArrays Points 0 (fromIntegral (w * h))
+createHeightmapNormalDisplaying :: Heightmap Float -> Renderable -> IO Renderable
+createHeightmapNormalDisplaying (w, h, _) = createNormalDisplaying (fromIntegral (w * h))
+
+createNormalDisplaying :: Int -> Renderable -> IO Renderable
+createNormalDisplaying pointCount (Renderable _ vao _ _) = do
+    let render p = withBinding bindVertexArrayObject vao $ drawArrays Points 0 (fromIntegral pointCount)
     (program, disposeProgram) <- createProgramWithShaders
         [ ("normal_vs.glsl", VertexShader)
         , ("normal_gs.glsl", GeometryShader)
@@ -225,10 +229,25 @@ createGrass heightmap scale = do
 createRenderableBoxSet :: Float -> [V3 GLfloat] -> IO Renderable
 createRenderableBoxSet edgeSize translations = do
     (vao, render, disposeBox) <- createTexturedBox edgeSize
-    Just (texture, disposeTexture) <- loadImage "data/ground_3.png"
+    (textures, disposeTextures) <- unzip <$>
+        mapMaybeM loadImage
+            [ "data/RustMixedOnPaint012_1k/RustMixedOnPaint012_COL_VAR1_1K.jpg"
+            , "data/RustMixedOnPaint012_1k/RustMixedOnPaint012_NRM_1K.jpg"
+            , "data/RustMixedOnPaint012_1k/RustMixedOnPaint012_REFL_1K.jpg"
+            , "data/RustMixedOnPaint012_1k/RustMixedOnPaint012_GLOSS_1K.jpg"
+            ]
+        {-
+        mapMaybeM loadImage
+            [ "data/Bricks01_1k/Bricks01_COL_VAR1_1K.jpg"
+            , "data/Bricks01_1k/Bricks01_NRM_1K.jpg"
+            , "data/Bricks01_1k/Bricks01_REFL_1K.jpg"
+            , "data/Bricks01_1k/Bricks01_GLOSS_1K.jpg"
+            ]
+        -}
+
     (program1, disposeProgram1) <- createProgramWithShaders' "shadow_vs.glsl" "shadow_fs.glsl"
-    (program2, disposeProgram2) <- createProgramWithShaders' "generic_vs.glsl" "box_fs.glsl"
-    (program3, disposeProgram3) <- createProgramWithShaders' "generic_vs.glsl" "box_deferred_fs.glsl"
+    (program2, disposeProgram2) <- createProgramWithShaders' "box_vs.glsl" "box_fs.glsl"
+    (program3, disposeProgram3) <- createProgramWithShaders' "box_vs.glsl" "box_deferred_fs.glsl"
 
     let programs =
             [ (ShadowMappingStage, program1)
@@ -240,7 +259,7 @@ createRenderableBoxSet edgeSize translations = do
             disposeProgram1
             disposeProgram2
             disposeProgram3
-            disposeTexture
+            sequence_ disposeTextures
 
     transformations <- mapM
         (newMatrix RowMajor . flattenMatrix . mkTransformation noRotation) translations
@@ -250,7 +269,7 @@ createRenderableBoxSet edgeSize translations = do
             setUniform p "transformation" transformation
             setUniform p "materialSpecularIntensity" (5 :: GLfloat)
             setUniform p "materialSpecularPower" (20 :: GLfloat)
-            usingOrderedTextures p [texture] (render p)
+            usingOrderedTextures p textures (render p)
 
     return (Renderable programs vao render' disposeAll)
 

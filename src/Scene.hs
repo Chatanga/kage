@@ -92,13 +92,15 @@ createWorld = do
     heightmap <- loadHeightmap "data/heightmap-257.png"
     let heightmapScale = V3 1 1 0.1
     terrain <- createRenderableTerrain heightmap heightmapScale
+    spaceInvader1 <- createSpaceInvader (V3 10 5 25)
     objects <- sequence
         [ createSkyBox
         , return terrain
         -- , createNormalDisplaying heightmap terrain
         , createGrass heightmap heightmapScale
-        , createSpaceInvader (V3 10 5 25)
+        , return spaceInvader1
         , createSpaceInvader (V3 20 15 15)
+        -- , createNormalDisplaying 36 spaceInvader1
         -- , createTesselatedPyramid
         , createText (V3 10 0 20) (V3 0 0 0.04) (V3 0 (-0.04) 0) "Kage　-　かげ"
         ]
@@ -309,7 +311,7 @@ renderShadow world contextRef size objects = do
     let camera = fromJust (lookup (contextCameraName context) (worldCameras world))
         sun = worldSun world
         r = far / 8
-        projectionMatrix = Linear.ortho (-r * 2) (r * 2) (-r) r (-r) r
+        projectionMatrix = Linear.ortho (-r / 2) (r / 2) (-r) r (-r) r
         cameraMatrix = Linear.lookAt
             (cameraPosition camera - directionLightDirection sun)
             (cameraPosition camera)
@@ -462,6 +464,11 @@ renderScene renderingMode world contextRef size shadowInfo lights objects = do
 
             mapM_ (renderObjectIn ForwardShadingStage)
                 (filter (not . isRenderableIn DeferredShadingStage) objects)
+
+    {-
+    For every "terminal" shader, replace the default output with a dual output to 2 textures to add
+    the bloom effect.
+    -}
 
 renderObject
     :: Size

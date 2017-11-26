@@ -146,9 +146,6 @@ vec4 getFragColor(
     vec4 theCameraSpacePosition,
     vec4 theWorldSpacePosition)
 {
-    // Base color.
-    vec4 fragColor = baseColor;
-
     // Shadow.
     float visibility;
     if (shadowUsed == TRUE) {
@@ -159,29 +156,26 @@ vec4 getFragColor(
     }
 
     // Sunlight.
-    float diffuseIntensity = max(0.0, dot(normal, normalize(-sunLightDirection)));
-    vec3 specularColor = getSpecularColor(theWorldSpacePosition, normal, specularIntensity, specularPower, sunLightColor, sunLightDirection);
-    fragColor *= vec4((sunLightColor * (sunLightAmbientIntensity + diffuseIntensity) + specularColor) * visibility, 1.0);
+    vec3 ambient = sunLightColor * sunLightAmbientIntensity;
+    vec3 diffuse = sunLightColor * max(0.0, dot(normal, normalize(-sunLightDirection)));
+    vec3 specular = getSpecularColor(theWorldSpacePosition, normal, specularIntensity, specularPower, vec3(1, 0.5, 0.5), sunLightDirection);
+    //vec4 fragColor = vec4(0,0,0,1);
+    vec4 fragColor = baseColor * vec4(ambient + (diffuse + specular) * visibility, 1.0);
 
     // Light contributions.
     for (int i = 0; i < min(10, lightCount); ++i) {
-        float lightDistance = length(theWorldSpacePosition - vec4(lightPositions[i], 1.0));
+        vec3 lightDirection = lightPositions[i] - theWorldSpacePosition.xyz;
+        float lightDistance = length(lightDirection);
         float attenuation = 0.01 + 0.07 * lightDistance + 0.00008 * lightDistance * lightDistance;
-        fragColor += vec4(lightColors[i] / attenuation, 1.0);
+
+        vec3 diffuse = lightColors[i] * max(0.0, dot(normal, normalize(lightDirection)));
+        vec3 specular = getSpecularColor(theWorldSpacePosition, normal, specularIntensity, specularPower, lightColors[i], lightDirection);
+        fragColor += baseColor * vec4((diffuse + specular) / attenuation, 0.0);
     }
 
     // Add fog.
     float fogDistance = length(theCameraSpacePosition);
     fragColor = applyFog(fragColor, fogDistance);
-
-    /*
-    if (shadowUsed == TRUE) {
-        vec4 shadowCoord = shadow * theWorldSpacePosition;
-        float gap = (texture(shadowMap, shadowCoord.xy).z - shadowCoord.z - 0.005) * -1.0;
-        float i = gap;
-        fragColor = vec4(i, i, i, 1.0);
-    }
-    */
 
     return fragColor;
 }

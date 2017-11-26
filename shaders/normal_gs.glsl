@@ -18,8 +18,9 @@ void main()
     EmitVertex();
 
     vec3 normal = vec4(normal[0], 0.0).xyz;
-    gl_Position = mvp * vec4(position + normal, 1.0);
+    gl_Position = mvp * vec4(position + normal/2, 1.0);
     EmitVertex();
 
     EndPrimitive();
 }
+

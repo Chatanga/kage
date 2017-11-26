@@ -145,7 +145,7 @@ mainLoop window worldRef uiRef sizeRef quitRef (frameCount, mt0, mt1) = do
     (fps, timing) <- if elapsedSeconds > 0.25
         then do
             let fps = fromIntegral frameCount / elapsedSeconds
-            GLFW.setWindowTitle window ("OpenGL @ FPS: " ++ showGFloat (Just 2) fps "")
+            GLFW.setWindowTitle window ("Kage - OpenGL @ FPS: " ++ showGFloat (Just 2) fps "")
             return (Just fps, (0, mt2, mt2))
         else
             return (Nothing, (frameCount + 1, mt0, mt2))

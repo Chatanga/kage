@@ -55,16 +55,18 @@ withLoadedImage path action = do
         Left e -> do
             errorM "Kage" ("could not load image " ++ path ++ ": " ++ e)
             return Nothing
-        Right dynamicImage -> case dynamicImage of
-            ImageY8 (Image width height content) -> loadPixels Red width height content
-            ImageRGB8 (Image width height content) -> loadPixels RGB width height content
-            ImageRGBA8 (Image width height content) -> loadPixels RGBA width height content
-            ImageYCbCr8 image ->
-                let (Image width height content) = convertImage image :: Image PixelRGB8
-                in  loadPixels RGB width height content
-            _ -> do
-                errorM "Kage" ("Unmanaged image format " ++ path ++ ": " ++ fst (getFormatName dynamicImage))
-                return Nothing
+        Right dynamicImage -> do
+            infoM "Kage" ("Loading image format " ++ path ++ ": " ++ fst (getFormatName dynamicImage))
+            case dynamicImage of
+                ImageY8 (Image width height content) -> loadPixels Red width height content
+                ImageRGB8 (Image width height content) -> loadPixels RGB width height content
+                ImageRGBA8 (Image width height content) -> loadPixels RGBA width height content
+                ImageYCbCr8 image ->
+                    let (Image width height content) = convertImage image :: Image PixelRGB8
+                    in  loadPixels RGB width height content
+                _ -> do
+                    errorM "Kage" ("Unmanaged image format " ++ path ++ ": " ++ fst (getFormatName dynamicImage))
+                    return Nothing
 
 loadImageR8 :: String -> IO (Maybe (TextureObject, Dispose))
 loadImageR8 path = withLoadedImageR8 path $ \t -> do
