@@ -1,16 +1,19 @@
 module Shader
-    (   createProgramWithShaders'
+    (   acquireProgramWithShaders'
+    ,   acquireProgramWithShaders
+    ,   createProgramWithShaders'
     ,   createProgramWithShaders
     ) where
 
 import Control.Monad
+import Control.Monad.State
 import qualified Data.ByteString as BS
 import Data.Char
 import Data.List
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
 import Foreign (allocaArray, alloca, peek, plusPtr, withArray, peekArray, nullPtr, Ptr, castPtr)
-import Graphics.Rendering.OpenGL
+import Graphics.Rendering.OpenGL as GL
 import qualified Graphics.GL as Raw
 import System.FilePath
 import System.Log.Logger
@@ -21,6 +24,47 @@ import Ext.Program
 import Ext.Shader
 import FunctionalGL
 import Misc
+
+----------------------------------------------------------------------------------------------------
+
+acquireProgramWithShaders' :: String -> String -> ResourceIO (ExtProgram, ResourceIO ())
+acquireProgramWithShaders' vertexShaderName fragmentShaderName = acquireProgramWithShaders
+    [ (vertexShaderName, VertexShader)
+    , (fragmentShaderName, FragmentShader)
+    ]
+
+acquireProgramWithShaders :: [(String, ShaderType)] -> ResourceIO (ExtProgram, ResourceIO ())
+acquireProgramWithShaders shaderSources = do
+    program <- liftIO createExtProgram
+
+    shaders <- forM shaderSources $ \(shaderName, shaderType) ->
+        acquireResourceWith shaderName $ do
+            infoM "Kage" ("Loading shader " ++ shaderName ++ " as " ++ show shaderType)
+            shader <- createExtShader shaderType
+            vs <- readFileContentWithImports ("shaders" </> shaderName)
+            extShaderSourceBS shader $= vs
+            compileOk <- compileShader' shaderName shader
+            -- when compileOk $ attachExtShader program shader
+            return shader
+
+    liftIO $ forM shaders (attachExtShader program)
+
+    {- for vertex shaders
+    attribLocation program "xxx" $= AttribLocation N
+    (see AttribLocation in vertexAttribPointer and vertexAttribArray)
+    -}
+
+    {- for fragment shaders
+    bindFragDataLocation program "xxx" $= N
+    (see ColorAttachment in framebufferTexture2D)
+    -}
+    liftIO $ linkProgram' program
+
+    let dispose = do
+            liftIO $ deleteObjectName program
+            mapM_ (releaseResource . fst) shaderSources
+
+    return (program, dispose)
 
 ----------------------------------------------------------------------------------------------------
 
@@ -100,9 +144,9 @@ compileShader' shaderName shader = do
 
 checkShaderCompilation :: String -> ExtShader -> IO Bool
 checkShaderCompilation shaderName shader = do
-    compileOk <- get (extCompileStatus shader)
+    compileOk <- GL.get (extCompileStatus shader)
     unless compileOk $ do
-        log <- format <$> get (extShaderInfoLog shader)
+        log <- format <$> GL.get (extShaderInfoLog shader)
         errorM "Kage" ("could not compile shader " ++ show shaderName ++ ": " ++ log)
     return compileOk
 
@@ -114,9 +158,9 @@ linkProgram' program = do
 
 checkProgramLinking :: ExtProgram -> IO Bool
 checkProgramLinking program = do
-    linkOk <- get (extLinkStatus program)
+    linkOk <- GL.get (extLinkStatus program)
     unless linkOk $ do
-        log <- format <$> get (extProgramInfoLog program)
+        log <- format <$> GL.get (extProgramInfoLog program)
         errorM "Kage" ("could not link shader program " ++ show program ++ ": " ++ log)
     return linkOk
 
@@ -126,7 +170,7 @@ format text = intercalate "\n\t" (lines text)
 dumpProgram :: ExtProgram -> IO ()
 dumpProgram program = do
     infoM "Kage" $ "Program " ++ show program
-    shaders <- get (attachedExtShaders program)
+    shaders <- GL.get (attachedExtShaders program)
     forM_ shaders $ \s -> infoM "Kage" $ "\t" ++ intercalate " / " [show s]
     {-
     attribs <- get (activeAttribs program)
@@ -142,7 +186,7 @@ dumpProgram program = do
 isValidProgram :: ExtProgram -> IO Bool
 isValidProgram program = do
     validateExtProgram program
-    get (extValidateStatus program)
+    GL.get (extValidateStatus program)
 
 importExpr = RE.mkRegexWithOpts "^\\s*#include\\s+\"(.*)\"" True True
 

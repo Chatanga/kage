@@ -1,5 +1,6 @@
 module Texture
-    ( loadImage
+    ( acquireImage
+    , loadImage
     , loadImageR8
     , loadHeightmap
     , withLoadedImage
@@ -11,6 +12,7 @@ import Codec.Picture
 import Codec.Picture.Types
 import Control.Arrow
 import Control.Monad
+import Data.Maybe
 import qualified Data.Vector.Storable as V
 import qualified Foreign as F
 import Graphics.Rendering.OpenGL
@@ -21,6 +23,15 @@ import FunctionalGL
 import Heightmap
 import Misc
 
+----------------------------------------------------------------------------------------------------
+
+acquireImage :: String -> ResourceIO (Maybe (TextureObject, ResourceIO ()))
+acquireImage fileName = do
+    texture <- acquireResourceWith fileName (fst . fromJust <$> loadImage fileName)
+    return (Just (texture, releaseResource fileName))
+
+----------------------------------------------------------------------------------------------------
+
 loadImage :: String -> IO (Maybe (TextureObject, Dispose))
 loadImage path = withLoadedImage path $ \t -> do
     generateMipmap' Texture2D
@@ -30,9 +41,8 @@ loadImage path = withLoadedImage path $ \t -> do
     textureFilter Texture2D $= ((Linear', Just Linear'), Linear')
     -- textureFilter Texture2D $= ((Linear', Nothing), Linear')
     --
-    return t
 
-withLoadedImage :: String -> (TextureObject -> IO a) -> IO (Maybe (a, Dispose))
+withLoadedImage :: String -> (TextureObject -> IO ()) -> IO (Maybe (TextureObject, Dispose))
 withLoadedImage path action = do
     image <- readImage path -- :: IO (Either String (Image RP RGB Word8))
 
@@ -48,8 +58,8 @@ withLoadedImage path action = do
                         (TextureSize2D (fromIntegral width) (fromIntegral height))
                         0 -- No borders
                         (PixelData format UnsignedByte ptr)
-                result <- action texture
-                return (Just (result, deleteObjectName texture))
+                action texture
+                return (Just (texture, deleteObjectName texture))
 
     case image of
         Left e -> do

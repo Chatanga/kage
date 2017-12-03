@@ -21,6 +21,7 @@ module World (
 
 import Control.Arrow
 import Control.Monad
+import Control.Monad.State as S
 import Data.List
 import Data.Maybe
 import qualified Data.Set as Set
@@ -30,7 +31,7 @@ import Linear
 import Numeric
 
 import Buffer
-import FunctionalGL
+import FunctionalGL as FGL
 import Geometry
 import Heightmap
 import Misc
@@ -91,7 +92,7 @@ data World = World
 
 type DurationInMs = Double
 
-animateWorld :: DurationInMs -> World -> IO World
+animateWorld :: DurationInMs -> World -> ResourceIO World
 animateWorld timeDelta world = return world' where
 
     fireBalls = second (mapMaybe updateFireBall) (worldFireBalls world)
@@ -110,7 +111,7 @@ animateWorld timeDelta world = return world' where
 
     world' = world
         { worldFireBalls = fireBalls
-        , worldSun = sun
+        , worldSun = sun'
         , worldElapsedTime = elapsedTime
         }
 
@@ -127,7 +128,7 @@ alien =
     , "░░░██░██░░░"
     ]
 
-createSpaceInvader :: V3 Float -> IO Renderable
+createSpaceInvader :: V3 Float -> ResourceIO Renderable
 createSpaceInvader position = createRenderableBoxSet 2 $ map ((+) position . (*) 2) offsets where
     rowCount = fromIntegral (length alien)
     offsets = catMaybes . concat $
@@ -135,43 +136,44 @@ createSpaceInvader position = createRenderableBoxSet 2 $ map ((+) position . (*)
             for (zip [0..] row) $ \(x, c) ->
                 if c == '█' then Just (V3 0 x (rowCount - y)) else Nothing
 
-createFireBall :: IO Renderable
+createFireBall :: ResourceIO Renderable
 createFireBall = do
-    (vao, render, disposeSphere) <- createSphere 0
-    (program, disposeProgram) <- createProgramWithShaders
+    (vao, render, disposeSphere) <- liftIO $ createSphere 0
+    (program, releaseProgram) <- acquireProgramWithShaders
         [ ("fireball_vs.glsl", VertexShader)
         , ("fireball_gs.glsl", GeometryShader)
         , ("fireball_fs.glsl", FragmentShader)
         ]
-    let render' p = withState blend Enabled .
-            withState depthMask Disabled .
-            withState blendFunc (SrcAlpha, OneMinusSrcAlpha) .
-            withState cullFace (Just Back) $ render p
-    return (Renderable [(ForwardShadingStage, program)] vao render' (disposeSphere >> disposeProgram))
+    let render' p = FGL.withState blend Enabled .
+            FGL.withState depthMask Disabled .
+            FGL.withState blendFunc (SrcAlpha, OneMinusSrcAlpha) .
+            FGL.withState cullFace (Just Back) $ render p
+    return (Renderable [(ForwardShadingStage, program)] vao render' (liftIO disposeSphere >> releaseProgram))
 
-createRenderableTerrain :: Heightmap Float -> V3 Float -> IO Renderable
+createRenderableTerrain :: Heightmap Float -> V3 Float -> ResourceIO Renderable
 createRenderableTerrain heightmap scale = do
-    (vao, render, disposeTerrain) <- createTerrain heightmap scale
-    (textures, disposeTextures) <- unzip <$> mapMaybeM loadImage
-        [ "data/ground_1.png"
-        , "data/ground_5.png"
-        , "data/ground_3.png"
-        ]
-    (program1, disposeProgram1) <- createProgramWithShaders' "shadow_vs.glsl" "shadow_fs.glsl"
-    (program2, disposeProgram2) <- createProgramWithShaders' "generic_vs.glsl" "terrain_fs.glsl"
-    (program3, disposeProgram3) <- createProgramWithShaders' "generic_vs.glsl" "terrain_deferred_fs.glsl"
+    (vao, render, disposeTerrain) <- liftIO $ createTerrain heightmap scale
+    (textures, releaseTextures) <- unzip <$>
+        mapMaybeM acquireImage
+            [ "data/ground_1.png"
+            , "data/ground_5.png"
+            , "data/ground_3.png"
+            ]
+    (program1, releaseProgram1) <- acquireProgramWithShaders' "shadow_vs.glsl" "shadow_fs.glsl"
+    (program2, releaseProgram2) <- acquireProgramWithShaders' "generic_vs.glsl" "terrain_fs.glsl"
+    (program3, releaseProgram3) <- acquireProgramWithShaders' "generic_vs.glsl" "terrain_deferred_fs.glsl"
 
     let programs =
             [ (ShadowMappingStage, program1)
             , (ForwardShadingStage, program2)
             , (DeferredShadingStage, program3)
             ]
-        disposeAll = do
-            disposeTerrain
-            disposeProgram1
-            disposeProgram2
-            disposeProgram3
-            sequence_ disposeTextures
+        releaseAll = do
+            liftIO disposeTerrain
+            releaseProgram1
+            releaseProgram2
+            releaseProgram3
+            sequence_ releaseTextures
 
     let render' p =
             {- Ne sert à rien et pose problème en rendu différé.
@@ -180,34 +182,34 @@ createRenderableTerrain heightmap scale = do
             -}
             usingOrderedTextures p textures $ render p
 
-    return (Renderable programs vao render' disposeAll)
+    return (Renderable programs vao render' releaseAll)
 
-createHeightmapNormalDisplaying :: Heightmap Float -> Renderable -> IO Renderable
+createHeightmapNormalDisplaying :: Heightmap Float -> Renderable -> ResourceIO Renderable
 createHeightmapNormalDisplaying (w, h, _) = createNormalDisplaying (fromIntegral (w * h))
 
-createNormalDisplaying :: Int -> Renderable -> IO Renderable
+createNormalDisplaying :: Int -> Renderable -> ResourceIO Renderable
 createNormalDisplaying pointCount (Renderable _ vao _ _) = do
     let render p = withBinding bindVertexArrayObject vao $ drawArrays Points 0 (fromIntegral pointCount)
-    (program, disposeProgram) <- createProgramWithShaders
+    (program, releaseProgram) <- acquireProgramWithShaders
         [ ("normal_vs.glsl", VertexShader)
         , ("normal_gs.glsl", GeometryShader)
         , ("normal_fs.glsl", FragmentShader)
         ]
-    return (Renderable [(ForwardShadingStage, program)] vao render doNothing)
+    return (Renderable [(ForwardShadingStage, program)] vao render releaseProgram)
 
-createGrass :: Heightmap Float -> V3 Float -> IO Renderable
+createGrass :: Heightmap Float -> V3 Float -> ResourceIO Renderable
 createGrass heightmap scale = do
-    (vao, render, disposeTerrain) <- createRandomMesh heightmap scale
+    (vao, render, disposeTerrain) <- liftIO $ createRandomMesh heightmap scale
     let configureTexture t = withTexture2D t $ do
             forM_ [S, T] $ \coord -> textureWrapMode Texture2D coord $= (Mirrored, Repeat)
             return t
-    (preTextures, disposeTextures) <- unzip <$> mapMaybeM loadImage
+    (preTextures, releaseTextures) <- unzip <$> mapMaybeM acquireImage
         [ "data/grass_02/grass_04/diffus.tga"
         , "data/grass_02/grass_05/diffus.tga"
         , "data/grass_02/grass_06/diffus.tga"
         ]
-    textures <- mapM configureTexture preTextures
-    (program, disposeProgram) <- createProgramWithShaders
+    textures <- liftIO $ mapM configureTexture preTextures
+    (program, releaseProgram) <- acquireProgramWithShaders
         [ ("grass_vs.glsl", VertexShader)
         , ("grass_gs.glsl", GeometryShader)
         , ("grass_fs.glsl", FragmentShader)
@@ -216,28 +218,31 @@ createGrass heightmap scale = do
     let render' p =
             -- withState blend Enabled .
             -- withState blendFunc (SrcAlpha, OneMinusSrcAlpha) .
-            withState cullFace Nothing .
+            FGL.withState cullFace Nothing .
             usingOrderedTextures p textures $ do
             setUniform p "grassColor" (Color4 1 1 1 1 :: Color4 GLfloat)
             setUniform p "grassAlphaTest" (0.2 :: GLfloat)
             setUniform p "grassAlphaMultiplier" (1.2 :: GLfloat)
             render p
-    let dispose = disposeTerrain >> disposeProgram >> sequence_ disposeTextures
+    let releaseAll = do
+            liftIO disposeTerrain
+            releaseProgram
+            sequence_ releaseTextures
 
-    return (Renderable [(ForwardShadingStage, program)] vao render' dispose)
+    return (Renderable [(ForwardShadingStage, program)] vao render' releaseAll)
 
-createRenderableBoxSet :: Float -> [V3 GLfloat] -> IO Renderable
+createRenderableBoxSet :: Float -> [V3 GLfloat] -> ResourceIO Renderable
 createRenderableBoxSet edgeSize translations = do
-    (vao, render, disposeBox) <- createTexturedBox edgeSize
+    (vao, render, disposeBox) <- liftIO $ createTexturedBox edgeSize
+
     (textures, disposeTextures) <- unzip <$>
-        mapMaybeM loadImage
+        mapMaybeM acquireImage
             [ "data/RustMixedOnPaint012_1k/RustMixedOnPaint012_COL_VAR1_1K.jpg"
             , "data/RustMixedOnPaint012_1k/RustMixedOnPaint012_NRM_1K.jpg"
             , "data/RustMixedOnPaint012_1k/RustMixedOnPaint012_REFL_1K.jpg"
             , "data/RustMixedOnPaint012_1k/RustMixedOnPaint012_GLOSS_1K.jpg"
             ]
         {-
-        mapMaybeM loadImage
             [ "data/Bricks01_1k/Bricks01_COL_VAR1_1K.jpg"
             , "data/Bricks01_1k/Bricks01_NRM_1K.jpg"
             , "data/Bricks01_1k/Bricks01_REFL_1K.jpg"
@@ -245,25 +250,25 @@ createRenderableBoxSet edgeSize translations = do
             ]
         -}
 
-    (program1, disposeProgram1) <- createProgramWithShaders' "shadow_vs.glsl" "shadow_fs.glsl"
-    (program2, disposeProgram2) <- createProgramWithShaders' "box_vs.glsl" "box_fs.glsl"
-    (program3, disposeProgram3) <- createProgramWithShaders' "box_vs.glsl" "box_deferred_fs.glsl"
+    (program1, disposeProgram1) <- acquireProgramWithShaders' "shadow_vs.glsl" "shadow_fs.glsl"
+    (program2, disposeProgram2) <- acquireProgramWithShaders' "box_vs.glsl" "box_fs.glsl"
+    (program3, disposeProgram3) <- acquireProgramWithShaders' "box_vs.glsl" "box_deferred_fs.glsl"
 
     let programs =
             [ (ShadowMappingStage, program1)
             , (ForwardShadingStage, program2)
             , (DeferredShadingStage, program3)
             ]
-        disposeAll = do
-            disposeBox
+        releaseAll = do
+            liftIO disposeBox
             disposeProgram1
             disposeProgram2
             disposeProgram3
             sequence_ disposeTextures
 
-    transformations <- mapM
+    transformations <- liftIO $ mapM
         (newMatrix RowMajor . flattenMatrix . mkTransformation noRotation) translations
-        :: IO [GLmatrix GLfloat]
+        :: ResourceIO [GLmatrix GLfloat]
     -- TODO Use instanciation instead.
     let render' p = forM_ transformations $ \transformation -> do
             setUniform p "transformation" transformation
@@ -271,31 +276,31 @@ createRenderableBoxSet edgeSize translations = do
             setUniform p "materialSpecularPower" (20 :: GLfloat)
             usingOrderedTextures p textures (render p)
 
-    return (Renderable programs vao render' disposeAll)
+    return (Renderable programs vao render' releaseAll)
 
-createTransparentBox :: Float -> IO Renderable
+createTransparentBox :: Float -> ResourceIO Renderable
 createTransparentBox edgeSize = do
-    (vao, render, dispose) <- createBox edgeSize
-    (program, disposeProgram) <- createProgramWithShaders' "generic_vs.glsl" "box_fs.glsl"
+    (vao, render, disposeBox) <- liftIO $ createBox edgeSize
+    (program, releaseProgram) <- acquireProgramWithShaders' "generic_vs.glsl" "box_fs.glsl"
 
     let -- rotation = axisAngle (V3 1 2 3) (pi / 5)
         translation = V3 (-1.5) (-0.5) 0.6
         t = mkTransformation noRotation translation
 
-    transformation <- newMatrix RowMajor (flattenMatrix t) :: IO (GLmatrix GLfloat)
+    transformation <- liftIO $ newMatrix RowMajor (flattenMatrix t) :: ResourceIO (GLmatrix GLfloat)
 
     let render' p = do
             setUniform p "transformation" transformation
-            withState blend Enabled .
-                withState blendFunc (SrcAlpha, OneMinusSrcAlpha) .
-                withState depthMask Disabled .
-                withState cullFace Nothing $ render p
+            FGL.withState blend Enabled .
+                FGL.withState blendFunc (SrcAlpha, OneMinusSrcAlpha) .
+                FGL.withState depthMask Disabled .
+                FGL.withState cullFace Nothing $ render p
 
-    return (Renderable [(ForwardShadingStage, program)] vao render' (dispose >> disposeProgram))
+    return (Renderable [(ForwardShadingStage, program)] vao render' (liftIO disposeBox >> releaseProgram))
 
-createSkyBox :: IO Renderable
+createSkyBox :: ResourceIO Renderable
 createSkyBox = do
-    (vao, render, disposeSkyBox) <- createTexturedSkyBox far -- Using far is cheating here...
+    (vao, render, disposeSkyBox) <- liftIO $ createTexturedSkyBox far -- Using far is cheating here...
     let cloudTextureNames = map
             (\ext -> "data/skybox/cloudtop/cloudtop_" ++ ext ++ ".tga")
             ["dn", "up", "lf", "bk", "rt", "ft"]
@@ -306,23 +311,26 @@ createSkyBox = do
             textureWrapMode Texture2D S $= (Mirrored, Repeat)
             textureWrapMode Texture2D T $= (Mirrored, Repeat)
             return t
-    (preTextures, disposeTextures) <- unzip <$> mapMaybeM loadImage cloudTextureNames
-    textures <- mapM configureTexture preTextures
+    (preTextures, releaseTextures) <- unzip <$> mapMaybeM acquireImage cloudTextureNames
+    textures <- liftIO $ mapM configureTexture preTextures
 
-    (program, disposeProgram) <- createProgramWithShaders' "skybox_vs.glsl" "skybox_fs.glsl"
+    (program, releaseProgram) <- acquireProgramWithShaders' "skybox_vs.glsl" "skybox_fs.glsl"
 
     let render' p =
-            withState cullFace (Just Front) .
-            withState depthMask Disabled .
+            FGL.withState cullFace (Just Front) .
+            FGL.withState depthMask Disabled .
             usingOrderedTextures program textures $ render p
-        dispose = disposeSkyBox >> disposeProgram >> sequence_ disposeTextures
+        releaseAll = do
+            liftIO disposeSkyBox
+            releaseProgram
+            sequence_ releaseTextures
 
-    return (Renderable [(ForwardShadingStage, program)] vao render' dispose)
+    return (Renderable [(ForwardShadingStage, program)] vao render' releaseAll)
 
-createTesselatedPyramid :: IO Renderable
+createTesselatedPyramid :: ResourceIO Renderable
 createTesselatedPyramid = do
-    (vao, render, dispose) <- createPatchPyramid
-    (program, disposeProgram) <- createProgramWithShaders
+    (vao, render, dispose) <- liftIO createPatchPyramid
+    (program, acquireProgram) <- acquireProgramWithShaders
         [ ("triangle_vs.glsl", VertexShader)
         , ("triangle_cs.glsl", TessControlShader)
         , ("triangle_es.glsl", TessEvaluationShader)
@@ -331,20 +339,20 @@ createTesselatedPyramid = do
 
     let render' p = do
             patchVertices $= 3
-            withState polygonMode (Line, Line) .
-                withState cullFace Nothing $
+            FGL.withState polygonMode (Line, Line) .
+                FGL.withState cullFace Nothing $
                 render p
 
-    return (Renderable [(ForwardShadingStage, program)] vao render' (dispose >> disposeProgram))
+    return (Renderable [(ForwardShadingStage, program)] vao render' (liftIO dispose >> acquireProgram))
 
-createScreen :: IO Renderable
+createScreen :: ResourceIO Renderable
 createScreen = do
-    (vao, render, dispose) <- createSquare (0, 0) 1.95
-    (program, disposeProgram) <- createProgramWithShaders' "screen_vs.glsl" "screen_fs.glsl"
-    return (Renderable [(ForwardShadingStage, program)] vao render (dispose >> disposeProgram))
+    (vao, render, disposeSquare) <- liftIO $ createSquare (0, 0) 1.95
+    (program, releaseProgram) <- acquireProgramWithShaders' "screen_vs.glsl" "screen_fs.glsl"
+    return (Renderable [(ForwardShadingStage, program)] vao render (liftIO disposeSquare >> releaseProgram))
 
-createDeferredScreen :: IO Renderable
+createDeferredScreen :: ResourceIO Renderable
 createDeferredScreen = do
-    (vao, render, dispose) <- createSquare (0, 0) 2
-    (program, disposeProgram) <- createProgramWithShaders' "screen_vs.glsl" "deferred_screen_fs.glsl"
-    return (Renderable [(ForwardShadingStage, program)] vao render (dispose >> disposeProgram))
+    (vao, render, disposeSquare) <- liftIO $ createSquare (0, 0) 2
+    (program, releaseProgram) <- acquireProgramWithShaders' "screen_vs.glsl" "deferred_screen_fs.glsl"
+    return (Renderable [(ForwardShadingStage, program)] vao render (liftIO disposeSquare >> releaseProgram))

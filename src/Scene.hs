@@ -12,6 +12,7 @@ module Scene (
 import Control.Applicative
 import Control.Arrow
 import Control.Monad
+import Control.Monad.State as S
 import Data.Either
 import Data.Fixed
 import Data.IORef
@@ -21,7 +22,7 @@ import qualified Data.Set as Set
 import Foreign (nullPtr)
 import qualified GHC.Float as F
 -- import qualified Graphics.Rendering.FTGL as FTGL
-import Graphics.Rendering.OpenGL
+import Graphics.Rendering.OpenGL as GL
 import qualified Graphics.UI.GLFW as GLFW
 import Linear
 import Numeric (showGFloat)
@@ -71,8 +72,8 @@ data Move
 
 data Scene = Scene
     { sceneRender :: Size -> IO ()
-    , sceneAnimate :: Size -> Double -> IO Scene
-    , sceneManipulate :: Size -> Event -> IO (Maybe Scene) -- nothing <=> exit
+    , sceneAnimate :: Size -> Double -> ResourceIO Scene
+    , sceneManipulate :: Size -> Event -> ResourceIO (Maybe Scene) -- nothing <=> exit
     }
 
 createScene :: RenderingMode -> IORef World -> IORef Context -> Scene
@@ -87,9 +88,9 @@ createColorBufferScene index contextRef = Scene
     (\_ _ -> return (createColorBufferScene index contextRef))
     (\_ _ -> return (Just (createColorBufferScene index contextRef)))
 
-createWorld :: IO World
+createWorld :: ResourceIO World
 createWorld = do
-    heightmap <- loadHeightmap "data/heightmap-257.png"
+    heightmap <- liftIO $ loadHeightmap "data/heightmap-257.png"
     let heightmapScale = V3 1 1 0.1
     terrain <- createRenderableTerrain heightmap heightmapScale
     spaceInvader1 <- createSpaceInvader (V3 10 5 25)
@@ -114,11 +115,11 @@ createWorld = do
             0
     return world
 
-disposeWorld :: World -> IO ()
+disposeWorld :: World -> ResourceIO ()
 disposeWorld world =
     mapM_ renderableDispose (fst (worldFireBalls world) : worldObjects world)
 
-createContext :: IO Context
+createContext :: ResourceIO Context
 createContext = do
     screen <- createScreen
     deferredScreen <- createDeferredScreen
@@ -133,22 +134,22 @@ createContext = do
             Nothing
     return context
 
-disposeContext :: Context -> IO ()
+disposeContext :: Context -> ResourceIO ()
 disposeContext context = do
     renderableDispose (contextScreen context)
     case contextShadowFrameBuffer context of
-        Just (_, _, dispose) -> dispose
+        Just (_, _, dispose) -> liftIO dispose
         Nothing -> return ()
     case contextGeometryFrameBuffer context of
-        Just (_, _, dispose) -> dispose
+        Just (_, _, dispose) -> liftIO dispose
         Nothing -> return ()
 
 ----------------------------------------------------------------------------------------------------
 
-animate :: RenderingMode -> IORef World -> IORef Context -> Size -> Double -> IO Scene
+animate :: RenderingMode -> IORef World -> IORef Context -> Size -> Double -> ResourceIO Scene
 animate renderingMode worldRef contextRef (Size width height) timeDelta = do
-    world <- get worldRef
-    context <- get contextRef
+    world <- GL.get worldRef
+    context <- GL.get contextRef
 
     -- Move a camera for real by applying any registered move for the given time delta.
     let moveCamera camera = camera
@@ -188,7 +189,7 @@ animate renderingMode worldRef contextRef (Size width height) timeDelta = do
 
 ----------------------------------------------------------------------------------------------------
 
-manipulate :: RenderingMode -> IORef World -> IORef Context -> Size -> Event -> IO (Maybe Scene)
+manipulate :: RenderingMode -> IORef World -> IORef Context -> Size -> Event -> ResourceIO (Maybe Scene)
 
 -- Handle keyboard events.
 manipulate renderingMode worldRef contextRef size (EventKey k _ ks _)
@@ -198,16 +199,16 @@ manipulate renderingMode worldRef contextRef size (EventKey k _ ks _)
 
     -- Dump the shadow map in a PNG on F1.
     | k == GLFW.Key'F1 && ks == GLFW.KeyState'Pressed = do
-        context <- get contextRef
+        context <- GL.get contextRef
         case contextShadowFrameBuffer context of
-            Just (_, depthTexture, _) -> saveDepthTexture (fromIntegral w, fromIntegral h) depthTexture "shadowmap.png"
+            Just (_, depthTexture, _) -> liftIO $ saveDepthTexture (fromIntegral w, fromIntegral h) depthTexture "shadowmap.png"
                 where Size w h = shadowMapSize
             Nothing -> return ()
         return $ Just (createScene renderingMode worldRef contextRef)
 
     -- Move the camera using WASD keys (note that the keyboard layout is not taken into account).
     | otherwise = do
-        context <- get contextRef
+        context <- GL.get contextRef
         let
             moves = contextCameraMoves context
             handleKey = if ks == GLFW.KeyState'Released then Set.delete else Set.insert
@@ -224,15 +225,15 @@ manipulate renderingMode worldRef contextRef size (EventKey k _ ks _)
 
 -- Rotate the camera by dragging the mouse.
 manipulate renderingMode worldRef contextRef size (EventDrag dx dy) = do
-    context <- get contextRef
+    context <- GL.get contextRef
     let drag = fromMaybe (V2 0 0) (contextDrag context) + V2 dx dy
     contextRef $= context{ contextDrag = Just drag }
     return $ Just (createScene renderingMode worldRef contextRef)
 
 -- Shot randomly colored fire balls with the mouse right button.
 manipulate renderingMode worldRef contextRef size (EventMouseButton b bs _) = do
-    world <- get worldRef
-    context <- get contextRef
+    world <- GL.get worldRef
+    context <- GL.get contextRef
     let camera = fromJust (lookup (contextCameraName context) (worldCameras world))
     newFireBalls <- if b == GLFW.MouseButton'2 && bs == GLFW.MouseButtonState'Pressed
         then do
@@ -245,7 +246,7 @@ manipulate renderingMode worldRef contextRef size (EventMouseButton b bs _) = do
                 cursor = contextCursorPosition context
                 (V4 x y z _) = toWorld (Size width height) cursor projectionMatrix cameraMatrix
                 direction = Linear.normalize (V3 x y z - cameraPosition camera)
-            color <- runRandomIO $ Color3
+            color <- liftIO $ runRandomIO $ Color3
                 <$> getRandomR (0, 1)
                 <*> getRandomR (0, 1)
                 <*> getRandomR (0, 1)
@@ -258,8 +259,8 @@ manipulate renderingMode worldRef contextRef size (EventMouseButton b bs _) = do
 
 -- Store the cursor location.
 manipulate renderingMode worldRef contextRef size (EventCursorPos x y) = do
-    world <- get worldRef
-    context <- get contextRef
+    world <- GL.get worldRef
+    context <- GL.get contextRef
     contextRef $= context{ contextCursorPosition = V2 x y }
     return $ Just (createScene renderingMode worldRef contextRef)
 
@@ -274,7 +275,7 @@ shadowMapSize = Size 4096 4096
 
 display :: RenderingMode -> IORef World -> IORef Context -> Size -> IO ()
 display renderingMode worldRef contextRef size = do
-    world <- get worldRef
+    world <- GL.get worldRef
 
     let completeRenderer (Renderable programs vao render dispose) (FireBall p d (Color3 cx cy cz) a) = do
             transformation <- newMatrix RowMajor (flattenMatrix (mkTransformation noRotation p)) :: IO (GLmatrix GLfloat)
@@ -306,7 +307,7 @@ renderShadow
     -> [Renderable]
     -> IO (GLmatrix GLfloat, TextureObject)
 renderShadow world contextRef size objects = do
-    context <- get contextRef
+    context <- GL.get contextRef
 
     let camera = fromJust (lookup (contextCameraName context) (worldCameras world))
         sun = worldSun world
@@ -333,7 +334,7 @@ renderShadow world contextRef size objects = do
     (fbo, texture, disposeFramebuffer) <- createShadowFrameBuffer size
     contextRef $= context{ contextShadowFrameBuffer = Just (fbo, texture, disposeFramebuffer) }
 
-    backupViewport <- get viewport
+    backupViewport <- GL.get viewport
     viewport $= (Position 0 0, size)
     withDrawFramebuffer fbo $ do
         clear [DepthBuffer]
@@ -386,7 +387,7 @@ renderScene
     -> [Renderable]
     -> IO ()
 renderScene renderingMode world contextRef size shadowInfo lights objects = do
-    context <- get contextRef
+    context <- GL.get contextRef
 
     let (Size width heigh) = size
         camera = fromJust (lookup (contextCameraName context) (worldCameras world))
@@ -432,7 +433,7 @@ renderScene renderingMode world contextRef size shadowInfo lights objects = do
             (fbo, textures, disposeFramebuffer) <- createGeometryFrameBuffer size
             contextRef $= context{ contextGeometryFrameBuffer = Just (fbo, textures, disposeFramebuffer) }
 
-            backupViewport <- get viewport
+            backupViewport <- GL.get viewport
             viewport $= (Position 0 0, size)
             withDrawFramebuffer fbo $ do
                 clearColor $= Color4 0 0 0 1
@@ -546,7 +547,7 @@ renderObject
 
 displayBuffer :: IORef Context -> Int -> Size -> IO ()
 displayBuffer contextRef index size = do
-    context <- get contextRef
+    context <- GL.get contextRef
 
     let (Renderable programs vao render _) = contextScreen context
 

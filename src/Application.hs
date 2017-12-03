@@ -5,6 +5,7 @@ module Application (
 import Control.Applicative
 import Control.Concurrent
 import Control.Monad
+import Control.Monad.State
 import Data.IORef
 import Data.Maybe
 import qualified Data.Set as Set
@@ -16,6 +17,7 @@ import qualified Graphics.UI.GLFW as GLFW
 import Numeric (showGFloat)
 import System.Log.Logger
 
+import FunctionalGL
 import Layouts
 import Scene
 import View
@@ -25,25 +27,27 @@ import World
 
 type SceneUI = UI (Maybe Scene)
 
-createSceneView :: Bool -> Layout (Maybe Scene) -> Maybe Scene -> View (Maybe Scene)
-createSceneView hasFocus layout content = (createView content)
-    { viewHandleEvent = sceneHandleEvent
+createSceneView :: Bool -> Layout (Maybe Scene) -> ViewHandleEvent (Maybe Scene) -> Maybe Scene -> View (Maybe Scene)
+createSceneView hasFocus layout handleEvent content = (createView content)
+    { viewHandleEvent = handleEvent
     , viewLayout = layout
     , viewHasFocus = hasFocus
     }
 
-{- | Handle an event throw simple delegation to its inner content scene, if any. A scene being not
+{- | Handle an event through simple delegation to its inner content scene, if any. A scene being not
 aware of the view holding it, any change will stay local (excepted for a Nothing interpreted as a
 closure).
 -}
-sceneHandleEvent :: ViewHandleEvent (Maybe Scene)
-sceneHandleEvent event treeLoc =
+sceneHandleEvent :: IORef ResourceMap -> ViewHandleEvent (Maybe Scene)
+sceneHandleEvent currentResources event treeLoc =
     let view = getLabel treeLoc
         (_, size) = viewLocalBounds view
     in case viewContent view of
         Nothing -> return BubbleUp
         Just scene -> do
-            content' <- sceneManipulate scene size event
+            resources <- GL.get currentResources
+            (content', resources') <- runStateT (sceneManipulate scene size event) resources
+            currentResources $= resources'
             case content' of
                 Nothing -> return Terminate
                 Just scene' ->
@@ -64,7 +68,7 @@ runApplication name = do
 
     True <- GLFW.init
     mapM_ GLFW.windowHint
-        [   GLFW.WindowHint'Samples 4 -- 4x antialiasing
+        [   GLFW.WindowHint'Samples 4 -- 4x antialiasing (not very useful in deferred shading)
         ,   GLFW.WindowHint'ContextVersionMajor 4 --
         ,   GLFW.WindowHint'ContextVersionMinor 3 -- OpenGL >= 4.3 (required for compute shaders)
         ,   GLFW.WindowHint'OpenGLProfile GLFW.OpenGLProfile'Core
@@ -73,29 +77,36 @@ runApplication name = do
     GLFW.makeContextCurrent (Just window)
     GLFW.setWindowSize window w h -- must happen *after* 'createWindow'
 
-    mapM_ (\(k, v) -> get v >>= infoM "Kage" . ((k ++ ": ") ++))
+    mapM_ (\(k, v) -> GL.get v >>= infoM "Kage" . ((k ++ ": ") ++))
         [   ("Renderer", GL.renderer)
         ,   ("OpenGL version", GL.glVersion)
         ,   ("Shading language version", GL.shadingLanguageVersion)
         ]
 
-    currentWorld <- newIORef =<< createWorld
-    currentContext <- newIORef =<< createContext
+    let resources0 = newResourceMap
+
+    ((currentWorld, currentContext), resources1) <- flip runStateT resources0 $ do
+        currentWorld <- liftIO . newIORef =<< createWorld
+        currentContext <- liftIO . newIORef =<< createContext
+        return (currentWorld, currentContext)
+
+    currentResources <- newIORef resources1
 
     let masterScene = createScene DeferredShading currentWorld currentContext
         radarScene = createScene ForwardShading currentWorld currentContext
         [shadowScene, positionScene, normalScene, albedoAndSpecularScene] =
             map (`createColorBufferScene` currentContext) [0..3]
 
+    let handleEvent = sceneHandleEvent currentResources
     uiRef <- newIORef . createUI $
-        Node (createSceneView False adaptativeLayout Nothing)
-        [   Node (createSceneView True (anchorLayout [AnchorConstraint (Just 50) (Just 50) Nothing Nothing]) (Just masterScene))
-            [   Node (createSceneView False (fixedLayout (GL.Size 250 250)) (Just radarScene)) []
+        Node (createSceneView False adaptativeLayout handleEvent Nothing)
+        [   Node (createSceneView True (anchorLayout [AnchorConstraint (Just 50) (Just 50) Nothing Nothing]) handleEvent (Just masterScene))
+            [   Node (createSceneView False (fixedLayout (GL.Size 250 250)) handleEvent  (Just radarScene)) []
             ]
-        ,   Node (createSceneView False defaultLayout (Just shadowScene)) []
-        ,   Node (createSceneView False defaultLayout (Just positionScene)) []
-        ,   Node (createSceneView False defaultLayout (Just normalScene)) []
-        ,   Node (createSceneView False defaultLayout (Just albedoAndSpecularScene)) []
+        ,   Node (createSceneView False defaultLayout handleEvent (Just shadowScene)) []
+        ,   Node (createSceneView False defaultLayout handleEvent (Just positionScene)) []
+        ,   Node (createSceneView False defaultLayout handleEvent (Just normalScene)) []
+        ,   Node (createSceneView False defaultLayout handleEvent (Just albedoAndSpecularScene)) []
         ]
 
     sizeRef <- newIORef size
@@ -105,7 +116,7 @@ runApplication name = do
         sizeRef $= GL.Size (fromIntegral w) (fromIntegral h)
 
     let doProcessEvent event = do
-            ui <- get uiRef
+            ui <- GL.get uiRef
             ui' <- processEvent ui event
             uiRef $= ui'
             quitRef $= uiTerminated ui'
@@ -119,14 +130,16 @@ runApplication name = do
 
     GLFW.swapInterval 1 -- VSync on
 
-    -- run the main loop
-    mainLoop window currentWorld uiRef sizeRef quitRef (0, Nothing, Nothing)
+    resources2 <- GL.get currentResources
+    resources3 <- flip execStateT resources2 $ do
+        -- run the main loop
+        mainLoop window currentWorld uiRef sizeRef quitRef (0, Nothing, Nothing)
 
-    -- cleaning
-    world <- get currentWorld
-    disposeWorld world
-    context <- get currentContext
-    disposeContext context
+        -- cleaning
+        world <- GL.get currentWorld
+        disposeWorld world
+        context <- GL.get currentContext
+        disposeContext context
 
     GLFW.destroyWindow window
     GLFW.terminate
@@ -138,39 +151,38 @@ mainLoop
     -> IORef GL.Size
     -> IORef Bool
     -> (Int, Maybe Double, Maybe Double)
-    -> IO ()
+    -> ResourceIO ()
 mainLoop window worldRef uiRef sizeRef quitRef (frameCount, mt0, mt1) = do
-    mt2 <- GLFW.getTime
+    mt2 <- liftIO GLFW.getTime
     let elapsedSeconds = fromMaybe 1 ((-) <$> mt2 <*> mt0)
     (fps, timing) <- if elapsedSeconds > 0.25
         then do
             let fps = fromIntegral frameCount / elapsedSeconds
-            GLFW.setWindowTitle window ("Kage - OpenGL @ FPS: " ++ showGFloat (Just 2) fps "")
+            liftIO $ GLFW.setWindowTitle window ("Kage - OpenGL @ FPS: " ++ showGFloat (Just 2) fps "")
             return (Just fps, (0, mt2, mt2))
         else
             return (Nothing, (frameCount + 1, mt0, mt2))
 
-    size@(GL.Size w h) <- get sizeRef
+    size@(GL.Size w h) <- GL.get sizeRef
     uiRef $~ layout size
 
     let frameDuration = fromMaybe 0 ((-) <$> mt2 <*> mt1)
-    get worldRef >>= animateWorld frameDuration >>= ($=) worldRef
-    get uiRef >>= animateUI frameDuration >>= ($=) uiRef
+    GL.get worldRef >>= animateWorld frameDuration >>= ($=) worldRef
+    GL.get uiRef >>= animateUI frameDuration >>= ($=) uiRef
 
-    ui <- get uiRef
-    when (w > 0) $ do -- avoid an upcoming divide by zero
+    ui <- GL.get uiRef
+    when (w > 0) $ liftIO $ do -- avoid an upcoming divide by zero
         GL.clear [GL.ColorBuffer]
         renderViewTree size (uiRoot ui)
         GLFW.swapBuffers window
 
-    GLFW.pollEvents
-    shouldQuit <- (||) <$> get quitRef <*> GLFW.windowShouldClose window
-    when shouldQuit $ infoM "Kage" "Exiting"
+    liftIO GLFW.pollEvents
+    shouldQuit <- liftIO $ (||) <$> GL.get quitRef <*> GLFW.windowShouldClose window
+    if shouldQuit
+        then liftIO $ infoM "Kage" "Exiting"
+        else mainLoop window worldRef uiRef sizeRef quitRef timing
 
-    unless shouldQuit $
-        mainLoop window worldRef uiRef sizeRef quitRef timing
-
-animateUI :: Double -> SceneUI -> IO SceneUI
+animateUI :: Double -> SceneUI -> ResourceIO SceneUI
 animateUI frameDuration ui = do
     root' <- forM (uiRoot ui) $ \view -> do
         let (_, size) = viewLocalBounds view

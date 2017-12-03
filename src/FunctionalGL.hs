@@ -1,14 +1,19 @@
 {-# LANGUAGE ExistentialQuantification #-}
 
 module FunctionalGL
-    ( Stage(..)
+    ( ResourceIO
+    , ResourceMap
+    , newResourceMap
+    , acquireResourceWith
+    , releaseResource
+    , Stage(..)
     , ordinal
     , Render
     , Dispose
     , Renderable(..)
     , setUniform
     , getAndSet
-    , withState
+    , FunctionalGL.withState
     , withBinding
     , withBuffer
     , withTexture2D
@@ -19,22 +24,85 @@ module FunctionalGL
     , with'
     ) where
 
-{-  Destructor
-    , ResourceMap
-    , newResourceMap
-    , acquireResource
-    , acquireResourceWith
-    , registerResource
-    , releaseResource
--}
-
 import Control.Monad
+import Control.Monad.State as S
 import qualified Data.Map as Map
 import Data.Maybe
-import Graphics.Rendering.OpenGL
+import Graphics.Rendering.OpenGL as GL
 
 import Ext.Program
+import Ext.Shader
 import Ext.Uniform
+
+----------------------------------------------------------------------------------------------------
+
+type ResourceIO a = StateT ResourceMap IO a
+
+type ResourceMap = Map.Map String (Int, (Resource, IO ()))
+
+data Resource
+    = ResourceTO TextureObject
+    | ResourceBO BufferObject
+    | ResourceS Shader
+    | ResourceES ExtShader
+
+class AsResource a where
+    toResource :: a -> Resource
+    fromResource :: Resource -> Maybe a
+    deleteResource :: a -> IO ()
+
+instance AsResource TextureObject where
+    toResource = ResourceTO
+    fromResource (ResourceTO to) = Just to
+    fromResource _ = Nothing
+    deleteResource = deleteObjectName
+
+instance AsResource BufferObject where
+    toResource = ResourceBO
+    fromResource (ResourceBO to) = Just to
+    fromResource _ = Nothing
+    deleteResource = deleteObjectName
+
+instance AsResource Shader where
+    toResource = ResourceS
+    fromResource (ResourceS to) = Just to
+    fromResource _ = Nothing
+    deleteResource = deleteObjectName
+
+instance AsResource ExtShader where
+    toResource = ResourceES
+    fromResource (ResourceES to) = Just to
+    fromResource _ = Nothing
+    deleteResource = deleteObjectName
+
+newResourceMap = Map.empty
+
+acquireResourceWith :: (ObjectName a, AsResource a) => String -> IO a -> ResourceIO a
+acquireResourceWith key constructor = do
+    resources <- S.get
+    case Map.lookup key resources of
+        Nothing -> do
+            name <- liftIO constructor
+            S.put $ Map.insert key (1, (toResource name, deleteResource name)) resources
+            return name
+        Just (counter, (resource, destructor)) ->
+            case fromResource resource of
+                Just name -> do
+                    S.put $ Map.insert key (counter + 1, (resource, destructor)) resources
+                    return name
+                Nothing -> error "Resource found with a different type"
+
+releaseResource :: String -> ResourceIO ()
+releaseResource key = do
+    resources <- S.get
+    case Map.lookup key resources of
+        Nothing -> error "Unknown resource"
+        Just (counter, (resource, destructor)) ->
+            if counter > 1
+                then S.put $ Map.insert key (counter - 1, (resource, destructor)) resources
+                else do
+                    liftIO destructor
+                    S.put $ Map.delete key resources
 
 ----------------------------------------------------------------------------------------------------
 
@@ -58,7 +126,7 @@ data Renderable = Renderable
     {   renderableProgram :: [(Stage, ExtProgram)] -- ^ Exposed to bind uniforms.
     ,   renderableVao :: VertexArrayObject -- ^ Exposed, but shouldn't ; only used to display normals.
     ,   renderableRender :: Render
-    ,   renderableDispose :: Dispose
+    ,   renderableDispose :: ResourceIO ()
     }
 
 instance Show Renderable where
@@ -66,78 +134,20 @@ instance Show Renderable where
 
 ----------------------------------------------------------------------------------------------------
 
-type Destructor = ResourceMap -> IO ResourceMap
-
-type ResourceMap = Map.Map String (Int, (Resource, IO ()))
-
-data Resource
-    = ResourceTO TextureObject
-    | ResourceBO BufferObject
-
-class AsResource a where
-    toResource :: a -> Resource
-    fromResource :: Resource -> Maybe a
-    deleteResource :: a -> IO ()
-
-instance AsResource TextureObject where
-    toResource = ResourceTO
-    fromResource (ResourceTO to) = Just to
-    fromResource _ = Nothing
-    deleteResource = deleteObjectName
-
-instance AsResource BufferObject where
-    toResource = ResourceBO
-    fromResource (ResourceBO to) = Just to
-    fromResource _ = Nothing
-    deleteResource = deleteObjectName
-
-newResourceMap = Map.empty
-
-acquireResource :: (GeneratableObjectName a, AsResource a) => ResourceMap -> String -> IO (ResourceMap, a)
-acquireResource repository key = acquireResourceWith repository key (\_ -> return ())
-
-acquireResourceWith :: (GeneratableObjectName a, AsResource a) => ResourceMap -> String -> (a -> IO ()) -> IO (ResourceMap, a)
-acquireResourceWith repository key constructor = case Map.lookup key repository of
-    Nothing -> do
-        name <- genObjectName
-        constructor name
-        return (Map.insert key (1, (toResource name, deleteResource name)) repository, name)
-    Just (counter, (resource, destructor)) ->
-        case fromResource resource of
-            Just name -> return (Map.insert key (counter + 1, (resource, destructor)) repository, name)
-            Nothing -> error "Resource found with a different type"
-
-registerResource :: AsResource a => ResourceMap -> String -> a -> ResourceMap
-registerResource repository key name = case Map.lookup key repository of
-    Nothing -> Map.insert key (1, (toResource name, deleteResource name)) repository
-    Just (counter, (resource, destructor)) -> error ("Resource key already used: " ++ key)
-
-releaseResource :: ResourceMap -> String -> IO ResourceMap
-releaseResource repository key = case Map.lookup key repository of
-    Nothing -> return repository
-    Just (counter, (resource, destructor)) ->
-        if counter > 1
-            then return (Map.insert key (counter - 1, (resource, destructor)) repository)
-            else do
-                destructor
-                return (Map.delete key repository)
-
-----------------------------------------------------------------------------------------------------
-
 setUniform :: Uniform a => ExtProgram -> String -> a -> IO ()
 setUniform program variableName value = do
-    loc <- get (extUniformLocation program variableName)
+    loc <- GL.get (extUniformLocation program variableName)
     uniform loc $= value
 
 getAndSet :: StateVar a -> a -> IO a
 getAndSet stateVar newValue = do
-    oldValue <- get stateVar
+    oldValue <- GL.get stateVar
     stateVar $= newValue
     return oldValue
 
 withState :: StateVar a -> a -> IO b -> IO b
 withState state value action = do
-    oldValue <- get state
+    oldValue <- GL.get state
     state $= value
     r <- action
     state $= oldValue
@@ -192,7 +202,7 @@ withDrawFramebuffer fbo action = do
 
 with :: (HasSetter g a, HasGetter g a) => g -> a -> IO t -> IO t
 with var val action = do
-    old <- get var
+    old <- GL.get var
     var $= val
     ret <- action
     var $= old
@@ -204,7 +214,7 @@ data TemporaryValue = forall a g. (HasSetter g a, HasGetter g a) => g := a
 
 with' :: [TemporaryValue] -> IO t -> IO t
 with' tvs act = do
-    olds <- mapM (\(a := b) -> get a >>= \old -> return (a := old)) tvs
+    olds <- mapM (\(a := b) -> GL.get a >>= \old -> return (a := old)) tvs
     mapM_ (\(a := b) -> a $= b) tvs
     ret <- act
     mapM_ (\(a := b) -> a $= b) olds

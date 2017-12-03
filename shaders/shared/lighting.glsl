@@ -101,7 +101,7 @@ float getVisibility1(vec3 normal, vec4 shadowCoord)
         return 0.0;
     }
     else {
-        return 1.0;
+        return 0.5;
     }
 }
 
@@ -159,7 +159,6 @@ vec4 getFragColor(
     vec3 ambient = sunLightColor * sunLightAmbientIntensity;
     vec3 diffuse = sunLightColor * max(0.0, dot(normal, normalize(-sunLightDirection)));
     vec3 specular = getSpecularColor(theWorldSpacePosition, normal, specularIntensity, specularPower, vec3(1, 0.5, 0.5), sunLightDirection);
-    //vec4 fragColor = vec4(0,0,0,1);
     vec4 fragColor = baseColor * vec4(ambient + (diffuse + specular) * visibility, 1.0);
 
     // Light contributions.

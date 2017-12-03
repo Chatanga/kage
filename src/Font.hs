@@ -6,6 +6,7 @@ module Font (
 
 import System.Log.Logger
 import Control.Monad
+import Control.Monad.State
 import Control.Arrow
 import Control.Parallel.Strategies
 import Data.Bits
@@ -39,16 +40,16 @@ import Linear as LP hiding (distance)
 
 import Debug
 import Error
-import FunctionalGL
+import FunctionalGL as FGL
 import Shader
 import Texture
 import Buffer
 
 ----------------------------------------------------------------------------------------------------
 
-createText :: LP.V3 Float -> LP.V3 Float -> LP.V3 Float -> String -> IO Renderable
+createText :: LP.V3 Float -> LP.V3 Float -> LP.V3 Float -> String -> ResourceIO Renderable
 createText position up advance text = do
-    atlas <- getAtlas
+    atlas <- liftIO getAtlas
 
     let charInfos = mapMaybe ((`IntMap.lookup` atlas) . fromEnum) text
         (triangles, texCoords) = (concat *** concat) . unzip . snd $ mapAccumL toLetter position charInfos
@@ -64,27 +65,26 @@ createText position up advance text = do
             triangles = flattenVertices [p1, p2, p3, p1, p3, p4]
             texCoords = map ((/ 2048) . fromIntegral) [b, e, b+w, e, b+w, e+r, b, e, b+w, e+r, b, e+r]
 
-    (vao, render, dispose) <- createObject Triangles (Just triangles) Nothing (Just texCoords) Nothing Nothing Nothing
+    (vao, render, dispose) <- liftIO $ createObject Triangles (Just triangles) Nothing (Just texCoords) Nothing Nothing Nothing
     -- loadImage "atlas.png"
-    Just (texture, disposeTexture) <- withLoadedImage "data/atlas.png" $ \t -> do
+    Just (texture, disposeTexture) <- liftIO $ withLoadedImage "data/atlas.png" $ \t -> do
         generateMipmap' Texture2D
         --
         textureWrapMode Texture2D S $= (Repeated, Repeat)
         textureWrapMode Texture2D T $= (Repeated, Repeat)
         textureFilter Texture2D $= ((Linear', Just Linear'), Linear')
         --
-        return t
 
-    (program, disposeProgram) <- createProgramWithShaders' "letter_vs.glsl" "letter_fs.glsl"
+    (program, disposeProgram) <- liftIO $ createProgramWithShaders' "letter_vs.glsl" "letter_fs.glsl"
 
     let render' p =
             usingOrderedTextures p [texture] .
-                withState blend Enabled .
-                withState blendFunc (SrcAlpha, OneMinusSrcAlpha) .
-                withState depthMask Disabled .
-                withState cullFace Nothing $ render p
+                FGL.withState blend Enabled .
+                FGL.withState blendFunc (SrcAlpha, OneMinusSrcAlpha) .
+                FGL.withState depthMask Disabled .
+                FGL.withState cullFace Nothing $ render p
 
-    return (Renderable [(ForwardShadingStage, program)] vao render' (dispose >> disposeProgram >> disposeTexture))
+    return (Renderable [(ForwardShadingStage, program)] vao render' (liftIO $ dispose >> disposeProgram >> disposeTexture))
 
 ----------------------------------------------------------------------------------------------------
 
