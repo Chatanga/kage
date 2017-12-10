@@ -16,7 +16,9 @@ module World (
     createSkyBox,
     createTesselatedPyramid,
     createScreen,
-    createDeferredScreen
+    createSsaoScreen,
+    createBlurScreen,
+    createLightingScreen
 ) where
 
 import Control.Arrow
@@ -351,8 +353,20 @@ createScreen = do
     (program, releaseProgram) <- acquireProgramWithShaders' "screen_vs.glsl" "screen_fs.glsl"
     return (Renderable [(ForwardShadingStage, program)] vao render (liftIO disposeSquare >> releaseProgram))
 
-createDeferredScreen :: ResourceIO Renderable
-createDeferredScreen = do
+createSsaoScreen :: ResourceIO Renderable
+createSsaoScreen = do
     (vao, render, disposeSquare) <- liftIO $ createSquare (0, 0) 2
-    (program, releaseProgram) <- acquireProgramWithShaders' "screen_vs.glsl" "deferred_screen_fs.glsl"
+    (program, releaseProgram) <- acquireProgramWithShaders' "screen_vs.glsl" "screen_ssao_fs.glsl"
+    return (Renderable [(ForwardShadingStage, program)] vao render (liftIO disposeSquare >> releaseProgram))
+
+createBlurScreen :: ResourceIO Renderable
+createBlurScreen = do
+    (vao, render, disposeSquare) <- liftIO $ createSquare (0, 0) 2
+    (program, releaseProgram) <- acquireProgramWithShaders' "screen_vs.glsl" "screen_blur_fs.glsl"
+    return (Renderable [(ForwardShadingStage, program)] vao render (liftIO disposeSquare >> releaseProgram))
+
+createLightingScreen :: ResourceIO Renderable
+createLightingScreen = do
+    (vao, render, disposeSquare) <- liftIO $ createSquare (0, 0) 2
+    (program, releaseProgram) <- acquireProgramWithShaders' "screen_vs.glsl" "screen_lighting_fs.glsl"
     return (Renderable [(ForwardShadingStage, program)] vao render (liftIO disposeSquare >> releaseProgram))

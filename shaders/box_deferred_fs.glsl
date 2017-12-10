@@ -33,4 +33,3 @@ void main()
 
     vec4 gloss = texture(samplers[3], texCoord);
 }
-

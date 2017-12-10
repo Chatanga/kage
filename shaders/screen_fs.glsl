@@ -8,4 +8,3 @@ void main()
 {
     gl_FragColor = texture(sampler, texCoord);
 }
-

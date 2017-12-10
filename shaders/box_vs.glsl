@@ -26,6 +26,6 @@ void main() {
     vec3 normal = vec3(transformation * vec4(inNormal, 0.0));
     vec3 tangent = vec3(transformation * vec4(inTangent, 0.0));
     vec3 bitangent = normalize(cross(normal, tangent));
-    tangentSpace = mat3(tangent, bitangent, normal);
+    tangentSpace = mat3(tangent, bitangent, normal); // From tangent to world space.
 }
 

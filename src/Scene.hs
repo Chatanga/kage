@@ -19,6 +19,7 @@ import Data.IORef
 import Data.List (intercalate)
 import Data.Maybe
 import qualified Data.Set as Set
+import qualified Data.Vector.Storable as VS
 import Foreign (nullPtr)
 import qualified GHC.Float as F
 -- import qualified Graphics.Rendering.FTGL as FTGL
@@ -49,13 +50,17 @@ data RenderingMode = ForwardShading | DeferredShading
 
 data Context = Context
     {   contextScreen :: Renderable
-    ,   contextDeferredScreen :: Renderable
+    ,   contextSsaoScreen :: Renderable
+    ,   contextBlurScreen :: Renderable
+    ,   contextLightingScreen :: Renderable
     ,   contextShadowFrameBuffer :: Maybe (FramebufferObject, TextureObject, Dispose)
     ,   contextGeometryFrameBuffer :: Maybe (FramebufferObject, [TextureObject], Dispose)
     ,   contextCameraName :: String
     ,   contextCameraMoves :: !(Set.Set Move)
     ,   contextCursorPosition :: V2 Double
     ,   contextDrag :: Maybe (V2 Double)
+    ,   contextSampleKernel :: [V3 Float]
+    ,   contextNoiseTexture :: (TextureObject, Dispose)
     }
 
 data Move
@@ -122,16 +127,24 @@ disposeWorld world =
 createContext :: ResourceIO Context
 createContext = do
     screen <- createScreen
-    deferredScreen <- createDeferredScreen
+    ssaoScreen <- createSsaoScreen
+    blurScreen <- createBlurScreen
+    lightingScreen <- createLightingScreen
+    contextSampleKernel <- liftIO generateSampleKernel
+    contextNoiseTexture <- liftIO generateNoiseTexture
     let context = Context
             screen
-            deferredScreen
+            ssaoScreen
+            blurScreen
+            lightingScreen
             Nothing
             Nothing
             "first-camera"
             Set.empty
             (V2 0 0)
             Nothing
+            contextSampleKernel
+            contextNoiseTexture
     return context
 
 disposeContext :: Context -> ResourceIO ()
@@ -143,6 +156,7 @@ disposeContext context = do
     case contextGeometryFrameBuffer context of
         Just (_, _, dispose) -> liftIO dispose
         Nothing -> return ()
+    liftIO $ snd (contextNoiseTexture context)
 
 ----------------------------------------------------------------------------------------------------
 
@@ -430,22 +444,49 @@ renderScene renderingMode world contextRef size shadowInfo lights objects = do
             case contextGeometryFrameBuffer context of
                 Just (_, _, disposeFramebuffer) -> disposeFramebuffer
                 Nothing -> return ()
-            (fbo, textures, disposeFramebuffer) <- createGeometryFrameBuffer size
+            (fbo, textures, disposeFramebuffer) <- createGeometryFrameBuffer False size
             contextRef $= context{ contextGeometryFrameBuffer = Just (fbo, textures, disposeFramebuffer) }
 
-            backupViewport <- GL.get viewport
-            viewport $= (Position 0 0, size)
-            withDrawFramebuffer fbo $ do
+            -- Deferred rendering
+            withDrawFramebuffer' size fbo $ do
                 clearColor $= Color4 0 0 0 1
                 depthFunc $= Just Less
                 -- clampColor ClampReadColor $= ClampOff
                 clear [ColorBuffer, DepthBuffer]
                 mapM_ (renderObjectIn DeferredShadingStage) objects
-            viewport $= backupViewport
 
-            let (Renderable programs vao render dispose) = contextDeferredScreen context
-                render' p = usingOrderedTextures p textures (render p)
-            renderObjectIn ForwardShadingStage (Renderable programs vao render' dispose)
+            (fbo2, ssaoTexture, disposeFramebuffer2) <- createSimpleFrameBuffer size
+
+            -- SSAO
+            let (Renderable programs vao render dispose) = contextSsaoScreen context
+                renderSsao p = do
+                    forM_ (zip [0..] (contextSampleKernel context)) $ \(i, v) ->
+                        setUniform p ("samples[" ++ show i ++ "]") (toVector3 v)
+                    setUniform p "screenWidth" (fromIntegral width :: Float)
+                    setUniform p "screenHeight" (fromIntegral heigh :: Float)
+                    let noiseTexture = fst (contextNoiseTexture context)
+                    usingOrderedTextures p (noiseTexture : textures) (render p)
+            withDrawFramebuffer' size fbo2 $
+                renderObjectIn ForwardShadingStage (Renderable programs vao renderSsao dispose)
+
+            (fbo3, bluredSsaoTexture, disposeFramebuffer3) <- createSimpleFrameBuffer size
+
+            -- Blur
+            let (Renderable programs vao render dispose) = contextBlurScreen context
+                renderBlur t p = usingOrderedTextures p [t] (render p)
+            withDrawFramebuffer' size fbo3 $
+                renderObjectIn ForwardShadingStage (Renderable programs vao (renderBlur ssaoTexture) dispose)
+
+            disposeFramebuffer2
+
+            -- Lighting
+            let (Renderable programs vao render dispose) = contextLightingScreen context
+                renderLighting p = do
+                    let noiseTexture = fst (contextNoiseTexture context)
+                    usingOrderedTextures p (bluredSsaoTexture : textures) (render p)
+            renderObjectIn ForwardShadingStage (Renderable programs vao renderLighting dispose)
+
+            disposeFramebuffer3
 
             {-
             In https://learnopengl.com/#!Advanced-Lighting/Deferred-Shading:
@@ -456,20 +497,48 @@ renderScene renderingMode world contextRef size shadowInfo lights objects = do
             -}
             bindFramebuffer ReadFramebuffer $= fbo
             clear [DepthBuffer]
-            let (Position dx dy) = fst backupViewport
+            (Position dx dy) <- fst <$> GL.get viewport
             blitFramebuffer
                 (Position 0 0) (Position width heigh)
                 (Position dx dy) (Position (dx + width) (dy + heigh))
                 [DepthBuffer'] Nearest
             bindFramebuffer Framebuffer $= defaultFramebufferObject
 
+            -- Render other objects (especially transparent ones) directly.
             mapM_ (renderObjectIn ForwardShadingStage)
                 (filter (not . isRenderableIn DeferredShadingStage) objects)
 
-    {-
-    For every "terminal" shader, replace the default output with a dual output to 2 textures to add
-    the bloom effect.
-    -}
+generateSampleKernel :: IO [V3 Float]
+generateSampleKernel = replicateM 64 $ do
+    [x, y, z, s] <- replicateM 4 (runRandomIO $ getRandomR (0, 1)) :: IO [Float]
+    let lerp a b f = a + f * (b - a)
+        sample = lerp 0.1 1.0 (s * s) *^ Linear.normalize (V3 (x * 2 - 1) (y * 2 - 1) z)
+    return sample :: IO (V3 Float)
+
+generateNoiseTexture :: IO (TextureObject, Dispose)
+generateNoiseTexture = do
+    let (width, height) = (4, 4)
+
+    noise <- concat <$> replicateM (width * height) (do
+        [x, y] <- replicateM 2 (runRandomIO $ getRandomR (0, 1)) :: IO [Float]
+        return [x * 2 - 1, y * 2 - 1, 0])
+
+    texture <- genObjectName
+    withTexture2D texture $ do
+        VS.unsafeWith (VS.fromList noise) $ \ptr ->
+            texImage2D
+                Texture2D
+                NoProxy
+                0 -- The mipmap level this image is responsible for.
+                RGB16F
+                (TextureSize2D (fromIntegral width) (fromIntegral height))
+                0 -- No borders
+                (PixelData RGB UnsignedByte ptr)
+                -- (PixelData RGB Float ptr)
+        textureWrapMode Texture2D S $= (Repeated, Repeat)
+        textureWrapMode Texture2D T $= (Repeated, Repeat)
+        textureFilter Texture2D $= ((Nearest, Nothing), Nearest)
+        return (texture, deleteObjectName texture)
 
 renderObject
     :: Size
@@ -576,4 +645,3 @@ displayBuffer contextRef index size = do
             Nothing -> return ()
 
     printErrors "Errors"
-

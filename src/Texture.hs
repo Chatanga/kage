@@ -13,7 +13,7 @@ import Codec.Picture.Types
 import Control.Arrow
 import Control.Monad
 import Data.Maybe
-import qualified Data.Vector.Storable as V
+import qualified Data.Vector.Storable as VS
 import qualified Foreign as F
 import Graphics.Rendering.OpenGL
 import System.Log.Logger
@@ -49,7 +49,7 @@ withLoadedImage path action = do
     let loadPixels format width height content = do
             texture <- genObjectName
             withTexture2D texture $ do
-                V.unsafeWith content $ \ptr ->
+                VS.unsafeWith content $ \ptr ->
                     texImage2D
                         Texture2D
                         NoProxy
@@ -96,7 +96,7 @@ withLoadedImageR8 path action = do
     let loadPixels format width height content = do
             texture <- genObjectName
             withTexture2D texture $ do
-                V.unsafeWith content $ \ptr ->
+                VS.unsafeWith content $ \ptr ->
                     texImage2D
                         Texture2D
                         NoProxy
@@ -124,18 +124,18 @@ withLoadedImageR8 path action = do
 
 loadHeightmap :: String -> IO (Heightmap Float)
 loadHeightmap path = do
-    let average v = sum (V.toList v) `divR` V.length v
-        greatest v = fromIntegral (maximum (V.toList v))
-        compact f n v = if V.null v then Nothing else Just (first f (V.splitAt n v))
+    let average v = sum (VS.toList v) `divR` VS.length v
+        greatest v = fromIntegral (maximum (VS.toList v))
+        compact f n v = if VS.null v then Nothing else Just (first f (VS.splitAt n v))
 
     result <- readImage path
     Just (width, height, values) <- case result of
         Left e -> return Nothing
         Right dynamicImage -> case dynamicImage of
             ImageY8 (Image width height content) ->
-                return (Just (width, height, V.map fromIntegral content))
+                return (Just (width, height, VS.map fromIntegral content))
             ImageRGB8 (Image width height content) ->
-                return (Just (width, height, V.unfoldr (compact greatest 3) content))
+                return (Just (width, height, VS.unfoldr (compact greatest 3) content))
             _ -> do
                 errorM "Kage" ("Unmanaged heightmap format: " ++ fst (getFormatName dynamicImage))
                 return Nothing

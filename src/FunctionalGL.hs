@@ -20,6 +20,7 @@ module FunctionalGL
     , usingOrderedTextures
     , usingTextures
     , withDrawFramebuffer
+    , withDrawFramebuffer'
     , TemporaryValue (..)
     , with'
     ) where
@@ -197,6 +198,13 @@ withDrawFramebuffer fbo action = do
     action
     -- TODO restore previous instead?
     bindFramebuffer DrawFramebuffer $= defaultFramebufferObject
+
+withDrawFramebuffer' :: GL.Size -> FramebufferObject -> IO () -> IO ()
+withDrawFramebuffer' size fbo action = do
+    backupViewport <- GL.get viewport
+    viewport $= (Position 0 0, size)
+    withDrawFramebuffer fbo action
+    viewport $= backupViewport
 
 ----------------------------------------------------------------------------------------------------
 

@@ -22,4 +22,3 @@ void main() {
     // store specular intensity in gAlbedoSpec's alpha component
     gAlbedoSpec.a = specular;
 }
-

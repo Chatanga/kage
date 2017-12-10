@@ -15,6 +15,7 @@ module Buffer
     ,   createFlatTerrain
     ,   createShadowFrameBuffer
     ,   createGeometryFrameBuffer
+    ,   createSimpleFrameBuffer
     ,   flattenMatrix
     ,   flattenVertices
         ---
@@ -485,6 +486,8 @@ createFlatTerrain (width, height) =
 
 ----------------------------------------------------------------------------------------------------
 
+-- TODO In shaders, xyz VS rgb regarding clamping?
+
 createShadowFrameBuffer :: Size -> IO (FramebufferObject, TextureObject, Dispose)
 createShadowFrameBuffer (Size w h) = do
     -- The framebuffer, which regroups 0, 1 or more textures, and 0 or 1 depth buffer.
@@ -498,7 +501,7 @@ createShadowFrameBuffer (Size w h) = do
         Texture2D
         NoProxy
         0 -- Mipmap level
-        DepthComponent'
+        DepthComponent' -- Best being explicit using RGB16F to avoid clamping case?
         (TextureSize2D w h)
         0 -- No borders
         (PixelData DepthComponent Float nullPtr)
@@ -526,8 +529,8 @@ createShadowFrameBuffer (Size w h) = do
 
     return (fbo, depthTexture, dispose)
 
-createGeometryFrameBuffer :: Size -> IO (FramebufferObject, [TextureObject], Dispose)
-createGeometryFrameBuffer (Size w h) = do
+createGeometryFrameBuffer :: Bool -> Size -> IO (FramebufferObject, [TextureObject], Dispose)
+createGeometryFrameBuffer useDepthTexture (Size w h) = do
     fbo <- genObjectName :: IO FramebufferObject
     bindFramebuffer DrawFramebuffer $= fbo
 
@@ -538,7 +541,7 @@ createGeometryFrameBuffer (Size w h) = do
         Texture2D
         NoProxy
         0 -- Mipmap level
-        RGB32F -- RGB16 will lead to clamping?
+        RGB16F -- RGB16 will lead to clamping?
         (TextureSize2D w h)
         0 -- No borders
         (PixelData RGB Float nullPtr)
@@ -552,7 +555,7 @@ createGeometryFrameBuffer (Size w h) = do
         Texture2D
         NoProxy
         0 -- Mipmap level
-        RGB32F -- RGB16 will lead to clamping?
+        RGB16F -- RGB16 will lead to clamping?
         (TextureSize2D w h)
         0 -- No borders
         (PixelData RGB Float nullPtr)
@@ -566,7 +569,7 @@ createGeometryFrameBuffer (Size w h) = do
         Texture2D
         NoProxy
         0 -- Mipmap level
-        RGBA32F -- RGB16 will lead to clamping?
+        RGB16F -- RGB16 will lead to clamping?
         (TextureSize2D w h)
         0 -- No borders
         (PixelData RGBA Float nullPtr)
@@ -576,25 +579,95 @@ createGeometryFrameBuffer (Size w h) = do
     -- tell OpenGL which color attachments we'll use (of this framebuffer) for rendering
     drawBuffers $= map FBOColorAttachment [0..2]
 
-    -- then also add render buffer object as depth buffer...
-    depthRenderBuffer <- genObjectName :: IO RenderbufferObject
-    bindRenderbuffer Renderbuffer $= depthRenderBuffer
-    renderbufferStorage Renderbuffer DepthComponent' (RenderbufferSize w h)
-    framebufferRenderbuffer Framebuffer DepthAttachment Renderbuffer depthRenderBuffer
+    (textures, dispose) <- if useDepthTexture
+
+        {- in https://learnopengl.com/#!Advanced-Lighting/SSAO:
+        It is possible to reconstruct the actual position vectors from depth values alone using some
+        clever tricks as Matt Pettineo described in his blog. This requires some extra calculations
+        in the shaders, but saves us from having to store position data in the G-buffer which costs
+        a lot of memory. For the sake of a simple example, we'll leave these optimizations out of
+        the tutorial.
+
+        Conlusion: useDepthTexture implies a tradeoff between speed and space.
+        -}
+        then do
+            -- A depth texture are slower than a depth buffer, but you can sample it later.
+            depthTexture <- genObjectName :: IO TextureObject
+            textureBinding Texture2D $= Just depthTexture
+            texImage2D
+                Texture2D
+                NoProxy
+                0 -- Mipmap level
+                DepthComponent' -- Best being explicit using RGB16F to avoid clamping case?
+                (TextureSize2D w h)
+                0 -- No borders
+                (PixelData DepthComponent Float nullPtr)
+            textureWrapMode Texture2D S $= (Repeated, ClampToEdge)
+            textureWrapMode Texture2D T $= (Repeated, ClampToEdge)
+            textureFilter Texture2D $= ((Nearest, Nothing), Nearest)
+            framebufferTexture2D DrawFramebuffer DepthAttachment Texture2D depthTexture 0
+
+            let textures = [positionTexture, normalTexture, albedoAndSpecularTexture, depthTexture]
+                dispose = do
+                    mapM_ deleteObjectName textures
+                    deleteObjectName fbo
+            return (textures, dispose)
+
+        else do
+            -- Add render buffer object as depth buffer...
+            depthRenderBuffer <- genObjectName :: IO RenderbufferObject
+            bindRenderbuffer Renderbuffer $= depthRenderBuffer
+            renderbufferStorage Renderbuffer DepthComponent' (RenderbufferSize w h)
+            framebufferRenderbuffer Framebuffer DepthAttachment Renderbuffer depthRenderBuffer
+
+            let textures = [positionTexture, normalTexture, albedoAndSpecularTexture]
+                dispose = do
+                    mapM_ deleteObjectName textures
+                    deleteObjectName depthRenderBuffer
+                    deleteObjectName fbo
+            return (textures, dispose)
 
     -- ...and check for completeness.
     Complete <- framebufferStatus Framebuffer
-
-    let textures = [positionTexture, normalTexture, albedoAndSpecularTexture]
-        dispose = do
-            mapM_ deleteObjectName textures
-            deleteObjectName depthRenderBuffer
-            deleteObjectName fbo
 
     bindFramebuffer DrawFramebuffer $= defaultFramebufferObject
 
     -- do not return the depth buffer which is not meant to be sampled
     return (fbo, textures, dispose)
+
+createSimpleFrameBuffer :: Size -> IO (FramebufferObject, TextureObject, Dispose)
+createSimpleFrameBuffer (Size w h) = do
+    fbo <- genObjectName :: IO FramebufferObject
+    bindFramebuffer DrawFramebuffer $= fbo
+
+    -- color buffer
+    texture <- genObjectName :: IO TextureObject
+    textureBinding Texture2D $= Just texture
+    texImage2D
+        Texture2D
+        NoProxy
+        0 -- Mipmap level
+        RGB16F -- RGB16 will lead to clamping?
+        (TextureSize2D w h)
+        0 -- No borders
+        (PixelData RGB Float nullPtr)
+    textureFilter Texture2D $= ((Nearest, Nothing), Nearest)
+    framebufferTexture2D DrawFramebuffer (ColorAttachment 0) Texture2D texture 0
+
+    -- tell OpenGL which color attachments we'll use (of this framebuffer) for rendering
+    drawBuffers $= map FBOColorAttachment [0]
+
+    -- ...and check for completeness.
+    Complete <- framebufferStatus Framebuffer
+
+    bindFramebuffer DrawFramebuffer $= defaultFramebufferObject
+
+    let dispose = do
+            deleteObjectName texture
+            deleteObjectName fbo
+
+    -- do not return the depth buffer which is not meant to be sampled
+    return (fbo, texture, dispose)
 
 ----------------------------------------------------------------------------------------------------
 
