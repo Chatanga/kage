@@ -13,6 +13,8 @@ uniform float screenHeight;
 
 in vec2 texCoord;
 
+layout(location = 0) out float occlusion;
+
 void main()
 {
     vec2 noiseScale = vec2(screenWidth / 4.0, screenHeight / 4.0);
@@ -26,7 +28,7 @@ void main()
 
     vec3 viewSpacePosition = (camera * vec4(worldSpacePosition, 1.0)).xyz;
     vec3 viewSpaceNormal = (camera * vec4(worldSpaceNormal, 0.0)).xyz;
-    
+
     // Banding appears with random noise...
     noise = vec3(1, 0, 0);
     vec3 tangent = normalize(noise - viewSpaceNormal * dot(noise, viewSpaceNormal));
@@ -37,7 +39,7 @@ void main()
     const float radius = 0.5;
     const float bias = 0.025;
 
-    float occlusion = 0.0;
+    occlusion = 0.0;
     for (int i = 0; i < kernelSize; ++i)
     {
         // get theSample position
@@ -57,7 +59,4 @@ void main()
         occlusion += (sampleDepth >= theSample.z + bias ? 1.0 : 0.0) * rangeCheck;
     }
     occlusion = 1.0 - (occlusion / kernelSize);
-
-    gl_FragColor = vec4(occlusion, occlusion, occlusion, 1.0);
 }
-

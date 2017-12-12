@@ -53,6 +53,7 @@ data Context = Context
     ,   contextSsaoScreen :: Renderable
     ,   contextBlurScreen :: Renderable
     ,   contextLightingScreen :: Renderable
+    ,   contextToneMappingScreen :: Renderable
     ,   contextShadowFrameBuffer :: Maybe (FramebufferObject, TextureObject, Dispose)
     ,   contextGeometryFrameBuffer :: Maybe (FramebufferObject, [TextureObject], Dispose)
     ,   contextCameraName :: String
@@ -130,26 +131,34 @@ createContext = do
     ssaoScreen <- createSsaoScreen
     blurScreen <- createBlurScreen
     lightingScreen <- createLightingScreen
-    contextSampleKernel <- liftIO generateSampleKernel
-    contextNoiseTexture <- liftIO generateNoiseTexture
+    toneMappingScreen <- createToneMappingScreen
+    sampleKernel <- liftIO generateSampleKernel
+    noiseTexture <- liftIO generateNoiseTexture
     let context = Context
             screen
             ssaoScreen
             blurScreen
             lightingScreen
+            toneMappingScreen
             Nothing
             Nothing
             "first-camera"
             Set.empty
             (V2 0 0)
             Nothing
-            contextSampleKernel
-            contextNoiseTexture
+            sampleKernel
+            noiseTexture
     return context
 
 disposeContext :: Context -> ResourceIO ()
 disposeContext context = do
-    renderableDispose (contextScreen context)
+    mapM_ (\getter -> renderableDispose (getter context))
+        [   contextScreen
+        ,   contextSsaoScreen
+        ,   contextBlurScreen
+        ,   contextLightingScreen
+        ,   contextToneMappingScreen
+        ]
     case contextShadowFrameBuffer context of
         Just (_, _, dispose) -> liftIO dispose
         Nothing -> return ()
@@ -478,35 +487,53 @@ renderScene renderingMode world contextRef size shadowInfo lights objects = do
                 renderObjectIn ForwardShadingStage (Renderable programs vao (renderBlur ssaoTexture) dispose)
 
             disposeFramebuffer2
+            (fbo4, hdrColorTexture, disposeFramebuffer4) <- createSimpleHdrFrameBuffer size
 
             -- Lighting
             let (Renderable programs vao render dispose) = contextLightingScreen context
                 renderLighting p = do
                     let noiseTexture = fst (contextNoiseTexture context)
                     usingOrderedTextures p (bluredSsaoTexture : textures) (render p)
-            renderObjectIn ForwardShadingStage (Renderable programs vao renderLighting dispose)
+            withDrawFramebuffer' size fbo4 $ do
+                depthFunc $= Just Less
+                clear [ColorBuffer, DepthBuffer]
+                renderObjectIn ForwardShadingStage (Renderable programs vao renderLighting dispose)
+                -- Copy back the depth buffer from our initial rendering.
+                bindFramebuffer ReadFramebuffer $= fbo
+                blitFramebuffer
+                    (Position 0 0) (Position width heigh)
+                    (Position 0 0) (Position width heigh)
+                    [DepthBuffer'] Nearest
+                -- Render other objects (especially transparent ones) directly.
+                mapM_ (renderObjectIn ForwardShadingStage)
+                    (filter (not . isRenderableIn DeferredShadingStage) objects)
 
             disposeFramebuffer3
 
-            {-
-            In https://learnopengl.com/#!Advanced-Lighting/Deferred-Shading:
-            What we need to do is first copy the depth information stored in the geometry pass into
-            the default framebuffer's depth buffer and only then render the light cubes. This way
-            the light cubes' fragments are only rendered when on top of the previously rendered
-            geometry.
-            -}
-            bindFramebuffer ReadFramebuffer $= fbo
-            clear [DepthBuffer]
-            (Position dx dy) <- fst <$> GL.get viewport
-            blitFramebuffer
-                (Position 0 0) (Position width heigh)
-                (Position dx dy) (Position (dx + width) (dy + heigh))
-                [DepthBuffer'] Nearest
-            bindFramebuffer Framebuffer $= defaultFramebufferObject
+            -- Tone mapping
+            let (Renderable programs vao render dispose) = contextToneMappingScreen context
+                renderToneMapping p = usingOrderedTextures p [hdrColorTexture] (render p)
+            renderObjectIn ForwardShadingStage (Renderable programs vao renderToneMapping dispose)
 
-            -- Render other objects (especially transparent ones) directly.
-            mapM_ (renderObjectIn ForwardShadingStage)
-                (filter (not . isRenderableIn DeferredShadingStage) objects)
+            disposeFramebuffer4
+
+{-
+In https://learnopengl.com/#!Advanced-Lighting/Deferred-Shading:
+What we need to do is first copy the depth information stored in the geometry pass into
+the default framebuffer's depth buffer and only then render the light cubes. This way
+the light cubes' fragments are only rendered when on top of the previously rendered
+geometry.
+-}
+copyDepth :: FramebufferObject -> Size -> IO ()
+copyDepth fbo (Size width heigh) = do
+    bindFramebuffer ReadFramebuffer $= fbo
+    clear [DepthBuffer]
+    (Position dx dy) <- fst <$> GL.get viewport
+    blitFramebuffer
+        (Position 0 0) (Position width heigh)
+        (Position dx dy) (Position (dx + width) (dy + heigh))
+        [DepthBuffer'] Nearest
+    bindFramebuffer Framebuffer $= defaultFramebufferObject
 
 generateSampleKernel :: IO [V3 Float]
 generateSampleKernel = replicateM 64 $ do

@@ -18,7 +18,8 @@ module World (
     createScreen,
     createSsaoScreen,
     createBlurScreen,
-    createLightingScreen
+    createLightingScreen,
+    createToneMappingScreen
 ) where
 
 import Control.Arrow
@@ -347,26 +348,25 @@ createTesselatedPyramid = do
 
     return (Renderable [(ForwardShadingStage, program)] vao render' (liftIO dispose >> acquireProgram))
 
+----------------------------------------------------------------------------------------------------
+
 createScreen :: ResourceIO Renderable
-createScreen = do
-    (vao, render, disposeSquare) <- liftIO $ createSquare (0, 0) 1.95
-    (program, releaseProgram) <- acquireProgramWithShaders' "screen_vs.glsl" "screen_fs.glsl"
-    return (Renderable [(ForwardShadingStage, program)] vao render (liftIO disposeSquare >> releaseProgram))
+createScreen = _createScreen ""
 
 createSsaoScreen :: ResourceIO Renderable
-createSsaoScreen = do
-    (vao, render, disposeSquare) <- liftIO $ createSquare (0, 0) 2
-    (program, releaseProgram) <- acquireProgramWithShaders' "screen_vs.glsl" "screen_ssao_fs.glsl"
-    return (Renderable [(ForwardShadingStage, program)] vao render (liftIO disposeSquare >> releaseProgram))
+createSsaoScreen = _createScreen "_ssao"
 
 createBlurScreen :: ResourceIO Renderable
-createBlurScreen = do
-    (vao, render, disposeSquare) <- liftIO $ createSquare (0, 0) 2
-    (program, releaseProgram) <- acquireProgramWithShaders' "screen_vs.glsl" "screen_blur_fs.glsl"
-    return (Renderable [(ForwardShadingStage, program)] vao render (liftIO disposeSquare >> releaseProgram))
+createBlurScreen = _createScreen "_blur"
 
 createLightingScreen :: ResourceIO Renderable
-createLightingScreen = do
+createLightingScreen = _createScreen "_lighting"
+
+createToneMappingScreen :: ResourceIO Renderable
+createToneMappingScreen = _createScreen "_tone-mapping"
+
+_createScreen :: String -> ResourceIO Renderable
+_createScreen suffix = do
     (vao, render, disposeSquare) <- liftIO $ createSquare (0, 0) 2
-    (program, releaseProgram) <- acquireProgramWithShaders' "screen_vs.glsl" "screen_lighting_fs.glsl"
+    (program, releaseProgram) <- acquireProgramWithShaders' "screen_vs.glsl" ("screen"++ suffix ++"_fs.glsl")
     return (Renderable [(ForwardShadingStage, program)] vao render (liftIO disposeSquare >> releaseProgram))
