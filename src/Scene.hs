@@ -27,6 +27,7 @@ import Graphics.Rendering.OpenGL as GL
 import qualified Graphics.UI.GLFW as GLFW
 import Linear
 import Numeric (showGFloat)
+import System.Log.Logger
 
 import Buffer
 import Debug
@@ -48,14 +49,35 @@ import World
 
 data RenderingMode = ForwardShading | DeferredShading
 
+useShadowMap = True
+shadowMapSize = Size 4096 4096
+
+data FrameBufferSet = FrameBufferSet
+    {   fbsSize :: Size
+    ,   fbsGeometry :: (FramebufferObject, [TextureObject])
+    ,   fbsSsao ::  (FramebufferObject, TextureObject)
+    ,   fbsBluredSsao :: (FramebufferObject, TextureObject)
+    ,   fbsHdrColor :: (FramebufferObject, TextureObject)
+    ,   fbsToneMapping :: (FramebufferObject, TextureObject, TextureObject)
+    ,   fbsBlurredBloom :: (FramebufferObject, TextureObject)
+    ,   fbsBlurredBloomAlt :: (FramebufferObject, TextureObject)
+    ,   fbsDispose :: Dispose
+    }
+
+data ScreenType
+    = Generic
+    | Ssao
+    | Blur
+    | Lighting -- HDR
+    | ToneMapping
+    | ColorBlur -- Gaussian
+    | ColorCombine
+    deriving (Eq, Ord, Show)
+
 data Context = Context
-    {   contextScreen :: Renderable
-    ,   contextSsaoScreen :: Renderable
-    ,   contextBlurScreen :: Renderable
-    ,   contextLightingScreen :: Renderable
-    ,   contextToneMappingScreen :: Renderable
-    ,   contextShadowFrameBuffer :: Maybe (FramebufferObject, TextureObject, Dispose)
-    ,   contextGeometryFrameBuffer :: Maybe (FramebufferObject, [TextureObject], Dispose)
+    {   contextShadowFrameBuffer :: (FramebufferObject, TextureObject, Dispose)
+    ,   contextFrameBufferSet :: Maybe FrameBufferSet
+    ,   contextScreens :: [(ScreenType, Renderable)]
     ,   contextCameraName :: String
     ,   contextCameraMoves :: !(Set.Set Move)
     ,   contextCursorPosition :: V2 Double
@@ -77,9 +99,9 @@ data Move
     deriving (Eq, Ord, Show)
 
 data Scene = Scene
-    { sceneRender :: Size -> IO ()
-    , sceneAnimate :: Size -> Double -> ResourceIO Scene
-    , sceneManipulate :: Size -> Event -> ResourceIO (Maybe Scene) -- nothing <=> exit
+    {   sceneRender :: Size -> IO ()
+    ,   sceneAnimate :: Size -> Double -> ResourceIO Scene
+    ,   sceneManipulate :: Size -> Event -> ResourceIO (Maybe Scene) -- nothing <=> exit
     }
 
 createScene :: RenderingMode -> IORef World -> IORef Context -> Scene
@@ -127,21 +149,22 @@ disposeWorld world =
 
 createContext :: ResourceIO Context
 createContext = do
-    screen <- createScreen
-    ssaoScreen <- createSsaoScreen
-    blurScreen <- createBlurScreen
-    lightingScreen <- createLightingScreen
-    toneMappingScreen <- createToneMappingScreen
+    shadowFrameBuffer <- liftIO $ createShadowFrameBuffer shadowMapSize
+    screens <- mapM (\(t, constructor) -> (,) t <$> constructor)
+            [ (Generic, createScreen)
+            , (Ssao, createSsaoScreen)
+            , (Blur, createBlurScreen)
+            , (Lighting, createLightingScreen)
+            , (ToneMapping, createToneMappingScreen)
+            , (ColorBlur, createColorBlurScreen)
+            , (ColorCombine, createColorCombineScreen)
+            ]
     sampleKernel <- liftIO generateSampleKernel
     noiseTexture <- liftIO generateNoiseTexture
     let context = Context
-            screen
-            ssaoScreen
-            blurScreen
-            lightingScreen
-            toneMappingScreen
+            shadowFrameBuffer
             Nothing
-            Nothing
+            screens
             "first-camera"
             Set.empty
             (V2 0 0)
@@ -152,20 +175,13 @@ createContext = do
 
 disposeContext :: Context -> ResourceIO ()
 disposeContext context = do
-    mapM_ (\getter -> renderableDispose (getter context))
-        [   contextScreen
-        ,   contextSsaoScreen
-        ,   contextBlurScreen
-        ,   contextLightingScreen
-        ,   contextToneMappingScreen
-        ]
-    case contextShadowFrameBuffer context of
-        Just (_, _, dispose) -> liftIO dispose
+    let (_, _, disposeShadowFrameBuffer) = contextShadowFrameBuffer context
+    liftIO disposeShadowFrameBuffer
+    mapM_ (renderableDispose . snd) (contextScreens context)
+    liftIO (snd (contextNoiseTexture context))
+    case contextFrameBufferSet context of
+        Just fbs -> liftIO (fbsDispose fbs)
         Nothing -> return ()
-    case contextGeometryFrameBuffer context of
-        Just (_, _, dispose) -> liftIO dispose
-        Nothing -> return ()
-    liftIO $ snd (contextNoiseTexture context)
 
 ----------------------------------------------------------------------------------------------------
 
@@ -223,10 +239,9 @@ manipulate renderingMode worldRef contextRef size (EventKey k _ ks _)
     -- Dump the shadow map in a PNG on F1.
     | k == GLFW.Key'F1 && ks == GLFW.KeyState'Pressed = do
         context <- GL.get contextRef
-        case contextShadowFrameBuffer context of
-            Just (_, depthTexture, _) -> liftIO $ saveDepthTexture (fromIntegral w, fromIntegral h) depthTexture "shadowmap.png"
-                where Size w h = shadowMapSize
-            Nothing -> return ()
+        let Size w h = shadowMapSize
+            (_, shadowTexture, _) = contextShadowFrameBuffer context
+        liftIO $ saveDepthTexture (fromIntegral w, fromIntegral h) shadowTexture "shadowmap.png"
         return $ Just (createScene renderingMode worldRef contextRef)
 
     -- Move the camera using WASD keys (note that the keyboard layout is not taken into account).
@@ -293,9 +308,6 @@ manipulate renderingMode worldRef contextRef size _ =
 
 ----------------------------------------------------------------------------------------------------
 
-useShadowMap = True
-shadowMapSize = Size 4096 4096
-
 display :: RenderingMode -> IORef World -> IORef Context -> Size -> IO ()
 display renderingMode worldRef contextRef size = do
     world <- GL.get worldRef
@@ -351,11 +363,7 @@ renderShadow world contextRef size objects = do
     projectionMat <- newMatrix RowMajor (flattenMatrix projectionMatrix)
     cameraMat <- newMatrix RowMajor (flattenMatrix cameraMatrix)
 
-    case contextShadowFrameBuffer context of
-        Just (_, _, disposeFramebuffer) -> disposeFramebuffer
-        Nothing -> return ()
-    (fbo, texture, disposeFramebuffer) <- createShadowFrameBuffer size
-    contextRef $= context{ contextShadowFrameBuffer = Just (fbo, texture, disposeFramebuffer) }
+    let (fbo, texture, _) = contextShadowFrameBuffer context
 
     backupViewport <- GL.get viewport
     viewport $= (Position 0 0, size)
@@ -442,7 +450,6 @@ renderScene renderingMode world contextRef size shadowInfo lights objects = do
     cullFace $= Just Back
     frontFace $= CW
     depthFunc $= Just Less
-    -- clampColor ClampReadColor $= ClampOff
 
     case renderingMode of
 
@@ -450,56 +457,49 @@ renderScene renderingMode world contextRef size shadowInfo lights objects = do
             mapM_ (renderObjectIn ForwardShadingStage) objects
 
         DeferredShading -> do
-            case contextGeometryFrameBuffer context of
-                Just (_, _, disposeFramebuffer) -> disposeFramebuffer
-                Nothing -> return ()
-            (fbo, textures, disposeFramebuffer) <- createGeometryFrameBuffer False size
-            contextRef $= context{ contextGeometryFrameBuffer = Just (fbo, textures, disposeFramebuffer) }
+            fbs <- getFrameBufferSet contextRef size
+            let (fbo1, geometryTextures) = fbsGeometry fbs
+                (fbo2, ssaoTexture) = fbsSsao fbs
+                (fbo3, bluredSsaoTexture) = fbsBluredSsao fbs
+                (fbo4, hdrColorTexture) = fbsHdrColor fbs
+                (fbo5, ldrColorTexture, bloomTexture) = fbsToneMapping fbs
+                (fbo6, bluredBloomTexture) = fbsBlurredBloom fbs
+                (fbo7, bluredBloomTextureAlt) = fbsBlurredBloomAlt fbs
 
             -- Deferred rendering
-            withDrawFramebuffer' size fbo $ do
+            withDrawFramebuffer' size fbo1 $ do
                 clearColor $= Color4 0 0 0 1
                 depthFunc $= Just Less
-                -- clampColor ClampReadColor $= ClampOff
                 clear [ColorBuffer, DepthBuffer]
                 mapM_ (renderObjectIn DeferredShadingStage) objects
 
-            (fbo2, ssaoTexture, disposeFramebuffer2) <- createSimpleFrameBuffer size
-
             -- SSAO
-            let (Renderable programs vao render dispose) = contextSsaoScreen context
+            let Just (Renderable programs vao render dispose) = lookup Ssao (contextScreens context)
                 renderSsao p = do
                     forM_ (zip [0..] (contextSampleKernel context)) $ \(i, v) ->
                         setUniform p ("samples[" ++ show i ++ "]") (toVector3 v)
                     setUniform p "screenWidth" (fromIntegral width :: Float)
                     setUniform p "screenHeight" (fromIntegral heigh :: Float)
                     let noiseTexture = fst (contextNoiseTexture context)
-                    usingOrderedTextures p (noiseTexture : textures) (render p)
+                    usingOrderedTextures p (noiseTexture : geometryTextures) (render p)
             withDrawFramebuffer' size fbo2 $
                 renderObjectIn ForwardShadingStage (Renderable programs vao renderSsao dispose)
 
-            (fbo3, bluredSsaoTexture, disposeFramebuffer3) <- createSimpleFrameBuffer size
-
             -- Blur
-            let (Renderable programs vao render dispose) = contextBlurScreen context
-                renderBlur t p = usingOrderedTextures p [t] (render p)
+            let Just (Renderable programs vao render dispose) = lookup Blur (contextScreens context)
+                renderBlur p = usingOrderedTextures p [ssaoTexture] (render p)
             withDrawFramebuffer' size fbo3 $
-                renderObjectIn ForwardShadingStage (Renderable programs vao (renderBlur ssaoTexture) dispose)
-
-            disposeFramebuffer2
-            (fbo4, hdrColorTexture, disposeFramebuffer4) <- createSimpleHdrFrameBuffer size
+                renderObjectIn ForwardShadingStage (Renderable programs vao renderBlur dispose)
 
             -- Lighting
-            let (Renderable programs vao render dispose) = contextLightingScreen context
-                renderLighting p = do
-                    let noiseTexture = fst (contextNoiseTexture context)
-                    usingOrderedTextures p (bluredSsaoTexture : textures) (render p)
+            let Just (Renderable programs vao render dispose) = lookup Lighting (contextScreens context)
+                renderLighting p = usingOrderedTextures p (bluredSsaoTexture : geometryTextures) (render p)
             withDrawFramebuffer' size fbo4 $ do
                 depthFunc $= Just Less
                 clear [ColorBuffer, DepthBuffer]
                 renderObjectIn ForwardShadingStage (Renderable programs vao renderLighting dispose)
                 -- Copy back the depth buffer from our initial rendering.
-                bindFramebuffer ReadFramebuffer $= fbo
+                bindFramebuffer ReadFramebuffer $= fbo1
                 blitFramebuffer
                     (Position 0 0) (Position width heigh)
                     (Position 0 0) (Position width heigh)
@@ -508,14 +508,74 @@ renderScene renderingMode world contextRef size shadowInfo lights objects = do
                 mapM_ (renderObjectIn ForwardShadingStage)
                     (filter (not . isRenderableIn DeferredShadingStage) objects)
 
-            disposeFramebuffer3
-
             -- Tone mapping
-            let (Renderable programs vao render dispose) = contextToneMappingScreen context
+            let Just (Renderable programs vao render dispose) = lookup ToneMapping (contextScreens context)
                 renderToneMapping p = usingOrderedTextures p [hdrColorTexture] (render p)
-            renderObjectIn ForwardShadingStage (Renderable programs vao renderToneMapping dispose)
+            withDrawFramebuffer' size fbo5 $
+                renderObjectIn ForwardShadingStage (Renderable programs vao renderToneMapping dispose)
 
+            -- Gaussian blur
+            let Just (Renderable programs vao render dispose) = lookup ColorBlur (contextScreens context)
+                operations = take 10 $ (bloomTexture, fbo7, True) : cycle
+                    [ (bluredBloomTextureAlt, fbo6, False)
+                    , (bluredBloomTexture, fbo7, True)
+                    ]
+            forM_ operations $ \(texture, fbo, horizontal) ->
+                withDrawFramebuffer' size fbo $
+                    let renderBlur p = do
+                            setUniform p "horizontal" (if horizontal then 1 else 0 :: GLint)
+                            usingOrderedTextures p [texture] (render p)
+                    in renderObjectIn ForwardShadingStage (Renderable programs vao renderBlur dispose)
+
+            -- Combine
+            let Just (Renderable programs vao render dispose) = lookup ColorCombine (contextScreens context)
+                renderCombine p = usingOrderedTextures p [ldrColorTexture, bluredBloomTexture] (render p)
+            renderObjectIn ForwardShadingStage (Renderable programs vao renderCombine dispose)
+
+getFrameBufferSet :: IORef Context -> Size -> IO FrameBufferSet
+getFrameBufferSet contextRef size = do
+    context <- GL.get contextRef
+    result <- case contextFrameBufferSet context of
+        Just fbs ->
+            if fbsSize fbs == size
+                then return (Just fbs)
+                else fbsDispose fbs >> return Nothing
+        Nothing -> return Nothing
+    case result of
+        Just fbs -> return fbs
+        Nothing -> do
+            infoM "Kage" ("Creating FB set at size " ++ show size)
+            fbs <- createFrameBufferSet size
+            contextRef $= context{ contextFrameBufferSet = Just fbs }
+            return fbs
+
+createFrameBufferSet :: Size -> IO FrameBufferSet
+createFrameBufferSet size = do
+    (fbo1, geometryTextures, disposeFramebuffer1) <- createGeometryFrameBuffer False size
+    (fbo2, ssaoTexture, disposeFramebuffer2) <- createSimpleFrameBuffer size
+    (fbo3, bluredSsaoTexture, disposeFramebuffer3) <- createSimpleFrameBuffer size
+    (fbo4, hdrColorTexture, disposeFramebuffer4) <- createHdrFrameBuffer size
+    (fbo5, [ldrColorTexture, bloomTexture], disposeFramebuffer5) <- createBloomFrameBuffer size
+    (fbo6, bluredBloomTexture, disposeFramebuffer6) <- createColorFrameBuffer size
+    (fbo7, bluredBloomTextureAlt, disposeFramebuffer7) <- createColorFrameBuffer size
+    let dispose = do
+            disposeFramebuffer1
+            disposeFramebuffer2
+            disposeFramebuffer3
             disposeFramebuffer4
+            disposeFramebuffer5
+            disposeFramebuffer6
+            disposeFramebuffer7
+    return $ FrameBufferSet
+        size
+        (fbo1, geometryTextures)
+        (fbo2, ssaoTexture)
+        (fbo3, bluredSsaoTexture)
+        (fbo4, hdrColorTexture)
+        (fbo5, ldrColorTexture, bloomTexture)
+        (fbo6, bluredBloomTexture)
+        (fbo7, bluredBloomTextureAlt)
+        dispose
 
 {-
 In https://learnopengl.com/#!Advanced-Lighting/Deferred-Shading:
@@ -645,15 +705,13 @@ displayBuffer :: IORef Context -> Int -> Size -> IO ()
 displayBuffer contextRef index size = do
     context <- GL.get contextRef
 
-    let (Renderable programs vao render _) = contextScreen context
+    let Just (Renderable programs vao render _) = lookup Generic (contextScreens context)
 
-        defaultTexture = case contextShadowFrameBuffer context of
-            Just (_, texture, _) -> Just texture
-            Nothing -> Nothing
+        (_, defaultTexture, _) = contextShadowFrameBuffer context
 
-        pickTexture :: [TextureObject] -> Maybe TextureObject
+        pickTexture :: [TextureObject] -> TextureObject
         pickTexture textures = if index < length textures
-            then Just (textures !! index)
+            then textures !! index
             else defaultTexture
 
         renderTexture :: TextureObject -> IO ()
@@ -663,12 +721,8 @@ displayBuffer contextRef index size = do
                 usingOrderedTextures program [texture] $
                     render program
 
-    case contextGeometryFrameBuffer context of
-        Just (_, textures, _) -> case pickTexture textures of
-            Just texture -> renderTexture texture
-            Nothing -> return ()
-        Nothing -> case defaultTexture of
-            Just texture -> renderTexture texture
-            Nothing -> return ()
+    case contextFrameBufferSet context of
+        Just fbs -> renderTexture (pickTexture (snd (fbsGeometry fbs)))
+        Nothing -> renderTexture defaultTexture
 
     printErrors "Errors"

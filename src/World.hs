@@ -15,11 +15,14 @@ module World (
     createTransparentBox,
     createSkyBox,
     createTesselatedPyramid,
+    --
     createScreen,
     createSsaoScreen,
     createBlurScreen,
     createLightingScreen,
-    createToneMappingScreen
+    createToneMappingScreen,
+    createColorBlurScreen,
+    createColorCombineScreen
 ) where
 
 import Control.Arrow
@@ -364,6 +367,12 @@ createLightingScreen = _createScreen "_lighting"
 
 createToneMappingScreen :: ResourceIO Renderable
 createToneMappingScreen = _createScreen "_tone-mapping"
+
+createColorBlurScreen :: ResourceIO Renderable
+createColorBlurScreen = _createScreen "_color-blur"
+
+createColorCombineScreen :: ResourceIO Renderable
+createColorCombineScreen = _createScreen "_color-combine"
 
 _createScreen :: String -> ResourceIO Renderable
 _createScreen suffix = do

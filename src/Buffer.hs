@@ -16,7 +16,9 @@ module Buffer
     ,   createShadowFrameBuffer
     ,   createGeometryFrameBuffer
     ,   createSimpleFrameBuffer
-    ,   createSimpleHdrFrameBuffer
+    ,   createHdrFrameBuffer
+    ,   createBloomFrameBuffer
+    ,   createColorFrameBuffer
     ,   flattenMatrix
     ,   flattenVertices
         ---
@@ -506,9 +508,17 @@ createSimpleFrameBuffer size = do
     (fbo, [texture], dispose) <- createFrameBuffer size [(R16F, Red)] Nothing
     return (fbo, texture, dispose)
 
-createSimpleHdrFrameBuffer :: Size -> IO (FramebufferObject, TextureObject, Dispose)
-createSimpleHdrFrameBuffer size = do
+createHdrFrameBuffer :: Size -> IO (FramebufferObject, TextureObject, Dispose)
+createHdrFrameBuffer size = do
     (fbo, [texture], dispose) <- createFrameBuffer size [(RGBA16F, RGBA)] (Just False) -- Alpha channel matters!
+    return (fbo, texture, dispose)
+
+createBloomFrameBuffer :: Size -> IO (FramebufferObject, [TextureObject], Dispose)
+createBloomFrameBuffer size = createFrameBuffer size [(RGB8, RGB), (RGB8, RGB)] Nothing
+
+createColorFrameBuffer :: Size -> IO (FramebufferObject, TextureObject, Dispose)
+createColorFrameBuffer size = do
+    (fbo, [texture], dispose) <- createFrameBuffer size [(RGB8, RGB)] Nothing
     return (fbo, texture, dispose)
 
 createFrameBuffer
