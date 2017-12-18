@@ -6,6 +6,7 @@ module FunctionalGL
     , newResourceMap
     , acquireResourceWith
     , releaseResource
+    , releaseUnreclaimedResources
     , Stage(..)
     , ordinal
     , Render
@@ -30,6 +31,7 @@ import Control.Monad.State as S
 import qualified Data.Map as Map
 import Data.Maybe
 import Graphics.Rendering.OpenGL as GL
+import System.Log.Logger
 
 import Ext.Program
 import Ext.Shader
@@ -105,18 +107,26 @@ releaseResource key = do
                     liftIO destructor
                     S.put $ Map.delete key resources
 
+releaseUnreclaimedResources :: ResourceIO ()
+releaseUnreclaimedResources = do
+    resources <- S.get :: ResourceIO ResourceMap
+    forM_ (Map.toList resources) $ \(key, (counter, (resource, destructor))) -> liftIO $ do
+        infoM "Kage" $ "Releasing unreclaimed resource " ++ show key
+        destructor
+    S.put Map.empty
+
 ----------------------------------------------------------------------------------------------------
 
 data Stage
     = ShadowMappingStage
-    | ForwardShadingStage
+    | DirectShadingStage
     | DeferredShadingStage
     deriving Eq
 
 ordinal :: Stage -> GLint
 ordinal stage = case stage of
     ShadowMappingStage -> 1
-    ForwardShadingStage -> 2
+    DirectShadingStage -> 2
     DeferredShadingStage -> 3
 
 type Render = ExtProgram -> IO ()

@@ -158,7 +158,7 @@ vec4 getFragColor(
     // Sunlight.
     vec3 ambient = sunLightColor * sunLightAmbientIntensity;
     vec3 diffuse = sunLightColor * max(0.0, dot(normal, normalize(-sunLightDirection)));
-    vec3 specular = getSpecularColor(theWorldSpacePosition, normal, specularIntensity, specularPower, vec3(1, 0.5, 0.5), sunLightDirection);
+    vec3 specular = getSpecularColor(theWorldSpacePosition, normal, specularIntensity, specularPower, sunLightColor, sunLightDirection);
     vec4 fragColor = baseColor * vec4(ambient + (diffuse + specular) * visibility, 1.0);
 
     // Light contributions.

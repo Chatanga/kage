@@ -4,16 +4,17 @@ uniform sampler2D sampler;
 
 in vec2 texCoord;
 
-out vec4 color;
-
 void main()
 {
-    vec4 baseColor = vec4(0, 0, 1, 1);
+    vec4 baseColor = vec4(0, 0, 0, 1);
+
+    vec2 size = textureSize(sampler, 0);
+    float e = 0.15; // Need to be dynamically adjusted.
 
     float distAlphaMask = texture(sampler, texCoord).r;
 
     bool OUTLINE = false;
-    vec4 OUTLINE_COLOR = vec4(1, 1, 0, 1);
+    vec4 OUTLINE_COLOR = vec4(1, 1, 1, 1);
     float OUTLINE_MIN_VALUE0 = 0.40;
     float OUTLINE_MIN_VALUE1 = 0.45;
     float OUTLINE_MAX_VALUE0 = 0.50;
@@ -29,15 +30,15 @@ void main()
     }
 
     bool SOFT_EDGES = true;
-    float SOFT_EDGE_MIN = 0.49;
-    float SOFT_EDGE_MAX = 0.51;
+    float SOFT_EDGE_MIN = 0.50 - e;
+    float SOFT_EDGE_MAX = 0.50 + e;
     if (SOFT_EDGES) {
         baseColor.a *= smoothstep(SOFT_EDGE_MIN, SOFT_EDGE_MAX, distAlphaMask);
     } else {
         baseColor.a = distAlphaMask >= 0.5 ? 1 : 0;
     }
 
-    bool OUTER_GLOW = true;
+    bool OUTER_GLOW = false;
     vec2 GLOW_UV_OFFSET = vec2(0.0008, 0.0008);
     vec4 OUTER_GLOW_COLOR = vec4(0, 0, 0, 0.75);
     float OUTER_GLOW_MIN_DVALUE = 0.49;
@@ -53,5 +54,6 @@ void main()
         baseColor = glowc * a + baseColor * (1 - a);
     }
 
-    color = baseColor;
+    gl_FragColor = baseColor;
 }
+

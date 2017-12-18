@@ -13,3 +13,4 @@ void main() {
     gl_Position = projection * camera * transformation * vec4(vertexPosition, 1.0);
     texCoord = inTexCoord;
 }
+

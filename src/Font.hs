@@ -65,17 +65,16 @@ createText position up advance text = do
             triangles = flattenVertices [p1, p2, p3, p1, p3, p4]
             texCoords = map ((/ 2048) . fromIntegral) [b, e, b+w, e, b+w, e+r, b, e, b+w, e+r, b, e+r]
 
-    (vao, render, dispose) <- liftIO $ createObject Triangles (Just triangles) Nothing (Just texCoords) Nothing Nothing Nothing
-    -- loadImage "atlas.png"
-    Just (texture, disposeTexture) <- liftIO $ withLoadedImage "data/atlas.png" $ \t -> do
-        generateMipmap' Texture2D
-        --
+    (vao, render, dispose) <- liftIO $
+        createObject Triangles (Just triangles) Nothing (Just texCoords) Nothing Nothing Nothing
+
+    Just (texture, disposeTexture) <- withAcquiredImage "data/atlas.png" $ \t -> do
+        -- generateMipmap' Texture2D
         textureWrapMode Texture2D S $= (Repeated, Repeat)
         textureWrapMode Texture2D T $= (Repeated, Repeat)
-        textureFilter Texture2D $= ((Linear', Just Linear'), Linear')
-        --
+        textureFilter Texture2D $= ((Linear', Nothing), Linear')
 
-    (program, disposeProgram) <- liftIO $ createProgramWithShaders' "letter_vs.glsl" "letter_fs.glsl"
+    (program, disposeProgram) <- acquireProgramWithShaders' "letter_vs.glsl" "letter_fs.glsl"
 
     let render' p =
             usingOrderedTextures p [texture] .
@@ -84,7 +83,11 @@ createText position up advance text = do
                 FGL.withState depthMask Disabled .
                 FGL.withState cullFace Nothing $ render p
 
-    return (Renderable [(ForwardShadingStage, program)] vao render' (liftIO $ dispose >> disposeProgram >> disposeTexture))
+    return $ Renderable
+        [(DirectShadingStage, program)]
+        vao
+        render'
+        (disposeTexture >> disposeProgram >> liftIO dispose)
 
 ----------------------------------------------------------------------------------------------------
 

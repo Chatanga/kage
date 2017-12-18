@@ -1,5 +1,6 @@
 module Texture
     ( acquireImage
+    , withAcquiredImage
     , loadImage
     , loadImageR8
     , loadHeightmap
@@ -28,6 +29,11 @@ import Misc
 acquireImage :: String -> ResourceIO (Maybe (TextureObject, ResourceIO ()))
 acquireImage fileName = do
     texture <- acquireResourceWith fileName (fst . fromJust <$> loadImage fileName)
+    return (Just (texture, releaseResource fileName))
+
+withAcquiredImage :: String -> (TextureObject -> IO ()) -> ResourceIO (Maybe (TextureObject, ResourceIO ()))
+withAcquiredImage fileName action = do
+    texture <- acquireResourceWith fileName (fst . fromJust <$> withLoadedImage fileName action)
     return (Just (texture, releaseResource fileName))
 
 ----------------------------------------------------------------------------------------------------

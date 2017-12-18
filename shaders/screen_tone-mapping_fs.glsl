@@ -24,7 +24,7 @@ vec4 reinhardAlgorithm(vec3 hdrColor)
     return vec4(mapped, 1.0);
 }
 
-/*uniform*/ float exposure = 1.0;
+/*uniform*/ float exposure = 2;
 
 vec4 exposureAlgorithm(vec3 hdrColor)
 {
@@ -41,7 +41,7 @@ vec4 exposureAlgorithm(vec3 hdrColor)
 void main()
 {
     vec3 hdrColor = texture(sampler, texCoord).rgb;
-    outLdrColor = exposureAlgorithm(hdrColor).rgb;
+    outLdrColor = passThroughAlgorithm(hdrColor).rgb;
     float i = (hdrColor.r + hdrColor.g + hdrColor.b) / 3.0;
     outBloom = i > 1.0 ? outLdrColor : vec3(0.0, 0.0, 0.0);
 }

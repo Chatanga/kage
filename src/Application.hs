@@ -68,10 +68,10 @@ runApplication name = do
 
     True <- GLFW.init
     mapM_ GLFW.windowHint
-        [   GLFW.WindowHint'Samples 4 -- 4x antialiasing (not very useful in deferred shading)
-        ,   GLFW.WindowHint'ContextVersionMajor 4 --
+        [   GLFW.WindowHint'ContextVersionMajor 4 --
         ,   GLFW.WindowHint'ContextVersionMinor 3 -- OpenGL >= 4.3 (required for compute shaders)
         ,   GLFW.WindowHint'OpenGLProfile GLFW.OpenGLProfile'Core
+        ,   GLFW.WindowHint'Samples 4 -- 4x antialiasing (not very useful in deferred shading)
         ]
     (Just window) <- GLFW.createWindow w h name Nothing Nothing
     GLFW.makeContextCurrent (Just window)
@@ -92,9 +92,9 @@ runApplication name = do
 
     currentResources <- newIORef resources1
 
-    let masterScene = createScene DeferredShading currentWorld currentContext
-        radarScene = createScene ForwardShading currentWorld currentContext
-        [shadowScene, positionScene, normalScene, albedoAndSpecularScene] =
+    let masterScene = createScene DeferredRendering currentWorld currentContext
+        radarScene = createScene SimpleRendering currentWorld currentContext
+        [positionScene, normalScene, albedoAndSpecularScene, shadowScene] =
             map (`createColorBufferScene` currentContext) [0..3]
 
     let handleEvent = sceneHandleEvent currentResources
@@ -103,10 +103,10 @@ runApplication name = do
         [   Node (createSceneView True (anchorLayout [AnchorConstraint (Just 50) (Just 50) Nothing Nothing]) handleEvent (Just masterScene))
             [   Node (createSceneView False (fixedLayout (GL.Size 250 250)) handleEvent  (Just radarScene)) []
             ]
-        ,   Node (createSceneView False defaultLayout handleEvent (Just shadowScene)) []
         ,   Node (createSceneView False defaultLayout handleEvent (Just positionScene)) []
         ,   Node (createSceneView False defaultLayout handleEvent (Just normalScene)) []
         ,   Node (createSceneView False defaultLayout handleEvent (Just albedoAndSpecularScene)) []
+        ,   Node (createSceneView False defaultLayout handleEvent (Just shadowScene)) []
         ]
 
     sizeRef <- newIORef size
@@ -130,8 +130,7 @@ runApplication name = do
 
     GLFW.swapInterval 1 -- VSync on
 
-    resources2 <- GL.get currentResources
-    resources3 <- flip execStateT resources2 $ do
+    GL.get currentResources >>= execStateT (do
         -- run the main loop
         mainLoop window currentWorld uiRef sizeRef quitRef (0, Nothing, Nothing)
 
@@ -140,6 +139,7 @@ runApplication name = do
         disposeWorld world
         context <- GL.get currentContext
         disposeContext context
+        releaseUnreclaimedResources)
 
     GLFW.destroyWindow window
     GLFW.terminate

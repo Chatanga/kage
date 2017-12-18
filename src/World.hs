@@ -17,6 +17,7 @@ module World (
     createTesselatedPyramid,
     --
     createScreen,
+    createSimpleScreen,
     createSsaoScreen,
     createBlurScreen,
     createLightingScreen,
@@ -154,7 +155,7 @@ createFireBall = do
             FGL.withState depthMask Disabled .
             FGL.withState blendFunc (SrcAlpha, OneMinusSrcAlpha) .
             FGL.withState cullFace (Just Back) $ render p
-    return (Renderable [(ForwardShadingStage, program)] vao render' (liftIO disposeSphere >> releaseProgram))
+    return (Renderable [(DirectShadingStage, program)] vao render' (liftIO disposeSphere >> releaseProgram))
 
 createRenderableTerrain :: Heightmap Float -> V3 Float -> ResourceIO Renderable
 createRenderableTerrain heightmap scale = do
@@ -171,7 +172,7 @@ createRenderableTerrain heightmap scale = do
 
     let programs =
             [ (ShadowMappingStage, program1)
-            , (ForwardShadingStage, program2)
+            , (DirectShadingStage, program2)
             , (DeferredShadingStage, program3)
             ]
         releaseAll = do
@@ -201,7 +202,7 @@ createNormalDisplaying pointCount (Renderable _ vao _ _) = do
         , ("normal_gs.glsl", GeometryShader)
         , ("normal_fs.glsl", FragmentShader)
         ]
-    return (Renderable [(ForwardShadingStage, program)] vao render releaseProgram)
+    return (Renderable [(DirectShadingStage, program)] vao render releaseProgram)
 
 createGrass :: Heightmap Float -> V3 Float -> ResourceIO Renderable
 createGrass heightmap scale = do
@@ -235,7 +236,7 @@ createGrass heightmap scale = do
             releaseProgram
             sequence_ releaseTextures
 
-    return (Renderable [(ForwardShadingStage, program)] vao render' releaseAll)
+    return (Renderable [(DirectShadingStage, program)] vao render' releaseAll)
 
 createRenderableBoxSet :: Float -> [V3 GLfloat] -> ResourceIO Renderable
 createRenderableBoxSet edgeSize translations = do
@@ -262,7 +263,7 @@ createRenderableBoxSet edgeSize translations = do
 
     let programs =
             [ (ShadowMappingStage, program1)
-            , (ForwardShadingStage, program2)
+            , (DirectShadingStage, program2)
             , (DeferredShadingStage, program3)
             ]
         releaseAll = do
@@ -302,7 +303,7 @@ createTransparentBox edgeSize = do
                 FGL.withState depthMask Disabled .
                 FGL.withState cullFace Nothing $ render p
 
-    return (Renderable [(ForwardShadingStage, program)] vao render' (liftIO disposeBox >> releaseProgram))
+    return (Renderable [(DirectShadingStage, program)] vao render' (liftIO disposeBox >> releaseProgram))
 
 createSkyBox :: ResourceIO Renderable
 createSkyBox = do
@@ -331,7 +332,7 @@ createSkyBox = do
             releaseProgram
             sequence_ releaseTextures
 
-    return (Renderable [(ForwardShadingStage, program)] vao render' releaseAll)
+    return (Renderable [(DirectShadingStage, program)] vao render' releaseAll)
 
 createTesselatedPyramid :: ResourceIO Renderable
 createTesselatedPyramid = do
@@ -349,12 +350,15 @@ createTesselatedPyramid = do
                 FGL.withState cullFace Nothing $
                 render p
 
-    return (Renderable [(ForwardShadingStage, program)] vao render' (liftIO dispose >> acquireProgram))
+    return (Renderable [(DirectShadingStage, program)] vao render' (liftIO dispose >> acquireProgram))
 
 ----------------------------------------------------------------------------------------------------
 
 createScreen :: ResourceIO Renderable
 createScreen = _createScreen ""
+
+createSimpleScreen :: ResourceIO Renderable
+createSimpleScreen = _createScreen "_simple"
 
 createSsaoScreen :: ResourceIO Renderable
 createSsaoScreen = _createScreen "_ssao"
@@ -378,4 +382,4 @@ _createScreen :: String -> ResourceIO Renderable
 _createScreen suffix = do
     (vao, render, disposeSquare) <- liftIO $ createSquare (0, 0) 2
     (program, releaseProgram) <- acquireProgramWithShaders' "screen_vs.glsl" ("screen"++ suffix ++"_fs.glsl")
-    return (Renderable [(ForwardShadingStage, program)] vao render (liftIO disposeSquare >> releaseProgram))
+    return (Renderable [(DirectShadingStage, program)] vao render (liftIO disposeSquare >> releaseProgram))
