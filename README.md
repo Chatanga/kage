@@ -7,8 +7,6 @@ Even if I usually take care of committing the project in a working state, this p
 
 ![Screen capture](doc/current-state.png "Current state")
 
-![Screen capture](doc/current-state-legend.png "Legend")
-
 Inspiration
 -----------
 
