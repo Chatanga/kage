@@ -94,8 +94,8 @@ runApplication name = do
 
     let masterScene = createScene DeferredRendering currentWorld currentContext
         radarScene = createScene SimpleRendering currentWorld currentContext
-        [positionScene, normalScene, albedoAndSpecularScene, shadowScene] =
-            map (`createColorBufferScene` currentContext) [0..3]
+        [ssaoScene, positionScene, normalScene, albedoAndSpecularScene, shadowScene] =
+            map (`createColorBufferScene` currentContext) [0..4]
 
     let handleEvent = sceneHandleEvent currentResources
     uiRef <- newIORef . createUI $
@@ -103,6 +103,7 @@ runApplication name = do
         [   Node (createSceneView True (anchorLayout [AnchorConstraint (Just 50) (Just 50) Nothing Nothing]) handleEvent (Just masterScene))
             [   Node (createSceneView False (fixedLayout (GL.Size 250 250)) handleEvent  (Just radarScene)) []
             ]
+        ,   Node (createSceneView False defaultLayout handleEvent (Just ssaoScene)) []
         ,   Node (createSceneView False defaultLayout handleEvent (Just positionScene)) []
         ,   Node (createSceneView False defaultLayout handleEvent (Just normalScene)) []
         ,   Node (createSceneView False defaultLayout handleEvent (Just albedoAndSpecularScene)) []

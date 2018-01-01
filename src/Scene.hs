@@ -133,7 +133,7 @@ createWorld = do
         , createSpaceInvader (V3 20 15 15)
         -- , createNormalDisplaying 36 spaceInvader
         -- , createTesselatedPyramid
-        -- , createText (V3 10 0 40) (V3 0 0 0.04) (V3 0 (-0.04) 0) "Kage　-　かげ"
+        , createText (V3 10 0 40) (V3 0 0 0.04) (V3 0 (-0.04) 0) "Kage　-　かげ"
         ]
     fireBallObject <- createFireBall
     let world = World
@@ -339,6 +339,10 @@ display renderingMode worldRef contextRef size = do
         objects = worldObjects world ++ fireBallObjects
         elapsedTime = worldElapsedTime world
 
+    -- Global?
+    clearColor $= Color4 0 0 0 1
+    depthFunc $= Just Less
+
     shadowInfo <- if useShadowMap
         then Just <$> renderShadow world contextRef shadowMapSize objects
         else return Nothing
@@ -456,10 +460,6 @@ renderScene renderingMode world contextRef size shadowInfo lights objects = do
             cameraMat
             (worldSun world)
             lights
-
-    -- Global?
-    clearColor $= Color4 0 0 0 1
-    depthFunc $= Just Less
 
     case renderingMode of
 

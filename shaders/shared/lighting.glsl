@@ -174,7 +174,7 @@ vec4 getFragColor(
 
     // Add fog.
     float fogDistance = length(theCameraSpacePosition);
-    //fragColor = applyFog(fragColor, fogDistance);
+    fragColor = applyFog(fragColor, fogDistance);
 
     return fragColor;
 }

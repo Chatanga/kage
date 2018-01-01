@@ -76,12 +76,16 @@ createText position up advance text = do
 
     (program, disposeProgram) <- acquireProgramWithShaders' "letter_vs.glsl" "letter_fs.glsl"
 
-    let render' p =
+    let toVector (V3 x y z) = Vector3 x y z
+        render' p =
             usingOrderedTextures p [texture] .
                 FGL.withState blend Enabled .
                 FGL.withState blendFunc (SrcAlpha, OneMinusSrcAlpha) .
                 FGL.withState depthMask Disabled .
-                FGL.withState cullFace Nothing $ render p
+                FGL.withState cullFace Nothing $ do
+                    setUniform p "advanceText" (toVector advance)
+                    setUniform p "upText" (toVector up)
+                    render p
 
     return $ Renderable
         [(DirectShadingStage, program)]
