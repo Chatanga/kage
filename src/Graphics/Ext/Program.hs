@@ -1,4 +1,4 @@
-module Ext.Program
+module Graphics.Ext.Program
     (   ExtProgram(..)
     ,   GetProgramPName(..)
     ,   extProgramVar1
@@ -36,8 +36,8 @@ import Foreign.Storable
 import Graphics.Rendering.OpenGL
 import qualified Graphics.GL as Raw
 
-import Ext.Shader
-import Ext.Utils
+import Graphics.Ext.Shader
+import Graphics.Ext.Utils
 
 ----------------------------------------------------------------------------------------------------
 

@@ -1,4 +1,4 @@
-module Debug (
+module Common.Debug (
     trace,
     traceList
 ) where

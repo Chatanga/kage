@@ -1,8 +1,7 @@
-module Scene (
+module Graphics.Scene (
     Scene(..),
+    Context(..),
     RenderingMode(..),
-    createWorld,
-    disposeWorld,
     createContext,
     disposeContext,
     createScene,
@@ -16,8 +15,9 @@ import Control.Monad.State as S
 import Data.Either
 import Data.Fixed
 import Data.IORef
-import Data.List (intercalate)
+import Data.List (intercalate, sortBy)
 import Data.Maybe
+import Data.Ord
 import qualified Data.Set as Set
 import qualified Data.Vector.Storable as VS
 import Foreign (nullPtr)
@@ -29,21 +29,23 @@ import Linear
 import Numeric (showGFloat)
 import System.Log.Logger
 
-import Buffer
-import Debug
-import Error
-import Ext.Program
-import Ext.Shader
-import Font
-import FunctionalGL
-import Geometry
-import Heightmap
-import Misc
-import Random
-import Shader
-import Texture
-import View
-import World
+import Common.Debug
+import Common.Misc
+import Common.Random
+
+import Graphics.Buffer
+import Graphics.Catalog
+import Graphics.Error
+import Graphics.Ext.Program
+import Graphics.Ext.Shader
+import Graphics.Font
+import Graphics.FunctionalGL
+import Graphics.Geometry
+import Graphics.Heightmap
+import Graphics.Shader
+import Graphics.Texture
+import Graphics.View
+import Graphics.World
 
 ----------------------------------------------------------------------------------------------------
 
@@ -89,19 +91,16 @@ data Context = Context
     }
 
 data Move
-    = GoUp -- add speed
+    = GoUp
     | GoDown
     | GoLeft
     | GoRight
     | GoForth
     | GoBack
-    | Yaw Double -- dX
-    | Pitch Double -- dY
-    | Roll Double -- dZ
     deriving (Eq, Ord, Show)
 
 data Scene = Scene
-    {   sceneRender :: Size -> IO ()
+    {   sceneRender :: Size -> ResourceIO ()
     ,   sceneAnimate :: Size -> Double -> ResourceIO Scene
     ,   sceneManipulate :: Size -> Event -> ResourceIO (Maybe Scene) -- nothing <=> exit
     }
@@ -114,40 +113,9 @@ createScene renderingMode worldRef contextRef = Scene
 
 createColorBufferScene :: Int -> IORef Context -> Scene
 createColorBufferScene index contextRef = Scene
-    (displayBuffer contextRef index)
+    (liftIO . displayBuffer contextRef index)
     (\_ _ -> return (createColorBufferScene index contextRef))
     (\_ _ -> return (Just (createColorBufferScene index contextRef)))
-
-createWorld :: ResourceIO World
-createWorld = do
-    heightmap <- liftIO $ loadHeightmap "data/heightmap-257.png"
-    let heightmapScale = V3 1 1 0.1
-    terrain <- createRenderableTerrain heightmap heightmapScale
-    spaceInvader <- createSpaceInvader (V3 10 5 25)
-    objects <- sequence
-        [ createSkyBox
-        , return terrain
-        -- , createNormalDisplaying heightmap terrain
-        , createGrass heightmap heightmapScale
-        , return spaceInvader
-        , createSpaceInvader (V3 20 15 15)
-        -- , createNormalDisplaying 36 spaceInvader
-        -- , createTesselatedPyramid
-        , createText (V3 10 0 40) (V3 0 0 0.04) (V3 0 (-0.04) 0) "Kage　-　かげ"
-        ]
-    fireBallObject <- createFireBall
-    let world = World
-            (heightmap, heightmapScale)
-            objects
-            (fireBallObject, [])
-            (DirectionLight (Color3 1 0.9 0.8 ^* 0.8) (V3 (-1.86) 0.45 (-0.56)) 0.1)
-            [("first-camera", Camera (V3 (-5) 0 (1.8 + 20)) 0 0 (pi/3))]
-            0
-    return world
-
-disposeWorld :: World -> ResourceIO ()
-disposeWorld world =
-    mapM_ renderableDispose (fst (worldFireBalls world) : worldObjects world)
 
 createContext :: ResourceIO Context
 createContext = do
@@ -197,10 +165,46 @@ disposeContext context = do
 
 ----------------------------------------------------------------------------------------------------
 
+allJoysticks =  [ GLFW.Joystick'1
+                , GLFW.Joystick'2
+                , GLFW.Joystick'3
+                , GLFW.Joystick'4
+                , GLFW.Joystick'5
+                , GLFW.Joystick'6
+                , GLFW.Joystick'7
+                , GLFW.Joystick'8
+                , GLFW.Joystick'9
+                , GLFW.Joystick'10
+                , GLFW.Joystick'11
+                , GLFW.Joystick'12
+                , GLFW.Joystick'13
+                , GLFW.Joystick'14
+                , GLFW.Joystick'15
+                , GLFW.Joystick'16
+                ]
+
 animate :: RenderingMode -> IORef World -> IORef Context -> Size -> Double -> ResourceIO Scene
 animate renderingMode worldRef contextRef (Size width height) timeDelta = do
     world <- GL.get worldRef
     context <- GL.get contextRef
+
+    let controlAircraft aircraft = do
+            availableJoysticks <- filterM GLFW.joystickPresent allJoysticks
+            case listToMaybe availableJoysticks of
+                Nothing -> return aircraft
+                Just joystick -> do
+                    maybeAxes <- GLFW.getJoystickAxes joystick
+                    case maybeAxes of
+                        Nothing -> return aircraft
+                        Just [roll, pitch, yaw, throttle, xHat, yHat] ->
+                            return $ aircraft
+                                {   aircraftThrustControl = realToFrac throttle
+                                ,   aircraftAileronControl = realToFrac roll
+                                ,   aircraftElevatorControl = realToFrac pitch
+                                ,   aircraftRudderControl = realToFrac yaw
+                                }
+
+    aircrafts <- liftIO $ mapM controlAircraft (worldAircrafts world)
 
     -- Move a camera for real by applying any registered move for the given time delta.
     let moveCamera camera = camera
@@ -232,7 +236,8 @@ animate renderingMode worldRef contextRef (Size width height) timeDelta = do
 
     let cameras = for (worldCameras world) $ \(n, c) ->
             if n == contextCameraName context then (n, moveCamera c) else (n, c)
-    worldRef $= world{ worldCameras = cameras }
+
+    worldRef $= world{ worldAircrafts = aircrafts, worldCameras = cameras }
 
     contextRef $= context{ contextDrag = Nothing }
 
@@ -302,8 +307,7 @@ manipulate renderingMode worldRef contextRef size (EventMouseButton b bs _) = do
                 <*> getRandomR (0, 1)
             return [FireBall (cameraPosition camera) direction color 0]
         else return []
-    let fireBalls' = second (++ newFireBalls) (worldFireBalls world)
-    worldRef $= world{ worldFireBalls = fireBalls' }
+    worldRef $= world{ worldFireBalls = newFireBalls ++ worldFireBalls world }
     contextRef $= context
     return $ Just (createScene renderingMode worldRef contextRef)
 
@@ -320,36 +324,29 @@ manipulate renderingMode worldRef contextRef size _ =
 
 ----------------------------------------------------------------------------------------------------
 
-display :: RenderingMode -> IORef World -> IORef Context -> Size -> IO ()
+display :: RenderingMode -> IORef World -> IORef Context -> Size -> ResourceIO ()
 display renderingMode worldRef contextRef size = do
-    world <- GL.get worldRef
+    world <- liftIO $ GL.get worldRef
 
-    let completeRenderer (Renderable programs vao render dispose) (FireBall p d (Color3 cx cy cz) a) = do
-            transformation <- newMatrix RowMajor (flattenMatrix (mkTransformation noRotation p)) :: IO (GLmatrix GLfloat)
-            let render' p = do
-                    setUniform p "transformation" transformation
-                    setUniform p "emissiveColor" (Color4 cx cy cz 1.0)
-                    render p
-            return (Renderable programs vao render' dispose)
-        (fireBallObject, fireBalls) = worldFireBalls world
+    fireBallObjects <- concat <$> mapM instanciate (worldFireBalls world)
+    aircraftObjects <- concat <$> mapM instanciate (worldAircrafts world)
 
-    fireBallObjects <- mapM (completeRenderer fireBallObject) fireBalls
-
-    let lights = map (\(FireBall p d c a) -> PointLight p c) fireBalls
-        objects = worldObjects world ++ fireBallObjects
+    let lights = map (\(FireBall p d c a) -> PointLight p c) (worldFireBalls world)
+        objects = worldObjects world ++ fireBallObjects ++ aircraftObjects
         elapsedTime = worldElapsedTime world
 
-    -- Global?
-    clearColor $= Color4 0 0 0 1
-    depthFunc $= Just Less
+    liftIO $ do
+        -- Global?
+        clearColor $= Color4 0 0 0 1
+        depthFunc $= Just Less
 
-    shadowInfo <- if useShadowMap
-        then Just <$> renderShadow world contextRef shadowMapSize objects
-        else return Nothing
+        shadowInfo <- if useShadowMap
+            then Just <$> renderShadow world contextRef shadowMapSize objects
+            else return Nothing
 
-    renderScene renderingMode world contextRef size shadowInfo lights objects
+        renderScene renderingMode world contextRef size shadowInfo lights objects
 
-    printErrors "Errors"
+        printErrors "Errors"
 
 renderShadow
     :: World
@@ -412,7 +409,7 @@ renderObjectShadow
     projection
     camera
     shadowTexture
-    (Renderable programs vao render _)
+    (Renderable programs vao render _ _)
     = case lookup ShadowMappingStage programs of
         Nothing -> return ()
         Just program -> withBinding currentExtProgram program $ do
@@ -450,7 +447,7 @@ renderScene renderingMode world contextRef size shadowInfo lights objects = do
     projectionMat <- newMatrix RowMajor (flattenMatrix projectionMatrix)
     cameraMat <- newMatrix RowMajor (flattenMatrix cameraMatrix)
 
-    let isRenderableIn stage (Renderable programs vao render _) = isJust (lookup stage programs)
+    let isRenderableIn stage (Renderable programs vao render _ _) = isJust (lookup stage programs)
         renderObjectIn = renderObject
             size
             (worldElapsedTime world)
@@ -460,11 +457,12 @@ renderScene renderingMode world contextRef size shadowInfo lights objects = do
             cameraMat
             (worldSun world)
             lights
+        sortedObjects = sortBy (comparing renderableZOrder) objects
 
     case renderingMode of
 
         SimpleRendering ->
-            mapM_ (renderObjectIn DirectShadingStage) objects
+            mapM_ (renderObjectIn DirectShadingStage) sortedObjects
 
         _ -> do
 
@@ -479,7 +477,7 @@ renderScene renderingMode world contextRef size shadowInfo lights objects = do
                 DirectRendering ->
                     withDrawFramebuffer' size fbo4 $ do
                         clear [ColorBuffer, DepthBuffer]
-                        mapM_ (renderObjectIn DirectShadingStage) objects
+                        mapM_ (renderObjectIn DirectShadingStage) sortedObjects
 
                 DeferredRendering -> do
                     let (fbo1, geometryTextures) = fbsGeometry fbs
@@ -489,10 +487,10 @@ renderScene renderingMode world contextRef size shadowInfo lights objects = do
                     -- Deferred rendering
                     withDrawFramebuffer' size fbo1 $ do
                         clear [ColorBuffer, DepthBuffer]
-                        mapM_ (renderObjectIn DeferredShadingStage) objects
+                        mapM_ (renderObjectIn DeferredShadingStage) sortedObjects
 
                     -- SSAO
-                    let Just (Renderable programs vao render dispose) = lookup Ssao (contextScreens context)
+                    let Just (Renderable programs vao render dispose zOrder) = lookup Ssao (contextScreens context)
                         renderSsao p = do
                             forM_ (zip [0..] (contextSampleKernel context)) $ \(i, v) ->
                                 setUniform p ("samples[" ++ show i ++ "]") (toVector3 v)
@@ -501,19 +499,19 @@ renderScene renderingMode world contextRef size shadowInfo lights objects = do
                             let noiseTexture = fst (contextNoiseTexture context)
                             usingOrderedTextures p (noiseTexture : geometryTextures) (render p)
                     withDrawFramebuffer' size fbo2 $
-                        renderObjectIn DirectShadingStage (Renderable programs vao renderSsao dispose)
+                        renderObjectIn DirectShadingStage (Renderable programs vao renderSsao dispose zOrder)
 
                     -- Blur
-                    let Just (Renderable programs vao render dispose) = lookup Blur (contextScreens context)
+                    let Just (Renderable programs vao render dispose zOrder) = lookup Blur (contextScreens context)
                         renderBlur p = usingOrderedTextures p [ssaoTexture] (render p)
                     withDrawFramebuffer' size fbo3 $
-                        renderObjectIn DirectShadingStage (Renderable programs vao renderBlur dispose)
+                        renderObjectIn DirectShadingStage (Renderable programs vao renderBlur dispose zOrder)
 
                     -- Lighting
-                    let Just (Renderable programs vao render dispose) = lookup Lighting (contextScreens context)
+                    let Just (Renderable programs vao render dispose zOrder) = lookup Lighting (contextScreens context)
                         renderLighting p = usingOrderedTextures p (bluredSsaoTexture : geometryTextures) (render p)
                     withDrawFramebuffer' size fbo4 $ do
-                        renderObjectIn DirectShadingStage (Renderable programs vao renderLighting dispose)
+                        renderObjectIn DirectShadingStage (Renderable programs vao renderLighting dispose zOrder)
                         -- Copy back the depth buffer from our initial rendering.
                         bindFramebuffer ReadFramebuffer $= fbo1
                         blitFramebuffer
@@ -522,16 +520,16 @@ renderScene renderingMode world contextRef size shadowInfo lights objects = do
                             [DepthBuffer'] Nearest
                         -- Render other objects (especially transparent ones) directly.
                         mapM_ (renderObjectIn DirectShadingStage)
-                            (filter (not . isRenderableIn DeferredShadingStage) objects)
+                            (filter (not . isRenderableIn DeferredShadingStage) sortedObjects)
 
             -- Tone mapping
-            let Just (Renderable programs vao render dispose) = lookup ToneMapping (contextScreens context)
+            let Just (Renderable programs vao render dispose zOrder) = lookup ToneMapping (contextScreens context)
                 renderToneMapping p = usingOrderedTextures p [hdrColorTexture] (render p)
             withDrawFramebuffer' size fbo5 $
-                renderObjectIn DirectShadingStage (Renderable programs vao renderToneMapping dispose)
+                renderObjectIn DirectShadingStage (Renderable programs vao renderToneMapping dispose zOrder)
 
             -- Gaussian blur
-            let Just (Renderable programs vao render dispose) = lookup ColorBlur (contextScreens context)
+            let Just (Renderable programs vao render dispose zOrder) = lookup ColorBlur (contextScreens context)
                 operations = take 10 $ (bloomTexture, fbo7, True) : cycle
                     [ (bluredBloomTextureAlt, fbo6, False)
                     , (bluredBloomTexture, fbo7, True)
@@ -541,12 +539,12 @@ renderScene renderingMode world contextRef size shadowInfo lights objects = do
                     let renderBlur p = do
                             setUniform p "horizontal" (if horizontal then 1 else 0 :: GLint)
                             usingOrderedTextures p [texture] (render p)
-                    in renderObjectIn DirectShadingStage (Renderable programs vao renderBlur dispose)
+                    in renderObjectIn DirectShadingStage (Renderable programs vao renderBlur dispose zOrder)
 
             -- Combine
-            let Just (Renderable programs vao render dispose) = lookup ColorCombine (contextScreens context)
+            let Just (Renderable programs vao render dispose zOrder) = lookup ColorCombine (contextScreens context)
                 renderCombine p = usingOrderedTextures p [ldrColorTexture, bluredBloomTexture] (render p)
-            renderObjectIn DirectShadingStage (Renderable programs vao renderCombine dispose)
+            renderObjectIn DirectShadingStage (Renderable programs vao renderCombine dispose zOrder)
 
 getFrameBufferSet :: IORef Context -> Size -> IO FrameBufferSet
 getFrameBufferSet contextRef size = do
@@ -665,7 +663,7 @@ renderObject
     sun
     lights
     stage
-    (Renderable programs vao render _)
+    (Renderable programs vao render _ _)
     = case lookup stage programs of
         Nothing -> return ()
         Just program -> withBinding currentExtProgram program $ do
@@ -681,7 +679,8 @@ renderObject
             setUniform program "sunLightDirection" (toVector3 $ directionLightDirection sun)
             setUniform program "sunLightAmbientIntensity" (directionLightAmbientIntensity sun)
 
-            setUniform program "fogColor" (Color4 (144/255) (142/255) (137/255) 1 :: Color4 GLfloat)
+            -- setUniform program "fogColor" (Color4 (144/255) (142/255) (137/255) 1 :: Color4 GLfloat)
+            setUniform program "fogColor" (Color4 0 0 0 1 :: Color4 GLfloat)
             setUniform program "fogStart" (50 :: GLfloat)
             setUniform program "fogEnd" (250 :: GLfloat)
             setUniform program "fogDensity" (0.005 :: GLfloat)
@@ -727,7 +726,7 @@ displayBuffer contextRef index size = do
             Just program -> withBinding currentExtProgram program .
                 usingOrderedTextures program [texture] $
                     render program
-            where Just (Renderable programs vao render _) = lookup screenType (contextScreens context)
+            where Just (Renderable programs vao render _ _) = lookup screenType (contextScreens context)
 
     case contextFrameBufferSet context of
         Just fbs -> do
@@ -744,7 +743,7 @@ displayBuffer contextRef index size = do
             renderTexture (cycle textures !! index)
         Nothing -> return ()
 
-    let (Renderable programs vao render _) = snd (cycle (contextTitles context) !! index)
+    let (Renderable programs vao render _ _) = snd (cycle (contextTitles context) !! index)
     case lookup DirectShadingStage programs of
         Nothing -> return ()
         Just program -> withBinding currentExtProgram program $ do

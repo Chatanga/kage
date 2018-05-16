@@ -1,8 +1,9 @@
 {-# LANGUAGE FlexibleInstances #-}
 
-module Buffer
+module Graphics.Buffer
     (   createSphere
     ,   createSquare
+    ,   createVector
     ,   createIndexedPyramid
     ,   createPatchPyramid
     ,   createBox
@@ -42,13 +43,14 @@ import Codec.Picture
 import Data.Vector.Storable (unsafeWith)
 import System.Log.Logger
 
-import Debug
-import Error
-import FunctionalGL
-import Heightmap
-import Misc
-import Random
-import Texture
+import Common.Misc
+import Common.Random
+import Common.Debug
+
+import Graphics.Error
+import Graphics.FunctionalGL
+import Graphics.Heightmap
+import Graphics.Texture
 
 ----------------------------------------------------------------------------------------------------
 
@@ -113,14 +115,7 @@ createSquare (dx, dy) s = createObject Triangles
             , 0.5, -0.5, 0
             ])
     -- Colors
-    (Just
-        [ 1, 0, 0
-        , 0, 1, 0
-        , 0, 0, 1
-        , 1, 0, 0
-        , 0, 0, 1
-        , 0, 1, 0
-        ])
+    Nothing
     -- Texture coordinates
     (Just
         [ 0, 1
@@ -136,6 +131,10 @@ createSquare (dx, dy) s = createObject Triangles
     Nothing
     -- Indices
     Nothing
+
+createVector :: V3 GLfloat -> IO (VertexArrayObject, Render, Dispose)
+createVector (V3 x y z) =
+    createMultiplexedObject ([x, y, z], [(pointLocation, 3)]) (drawArrays Points)
 
 createIndexedPyramid :: IO (VertexArrayObject, Render, Dispose)
 createIndexedPyramid = createObject Triangles
@@ -241,7 +240,8 @@ createBox edgeSize = do
             , 2, 6, 4
             , 2, 4, 0
             ]
-    createObject Triangles (Just triangles) (Just colors) Nothing Nothing Nothing Nothing
+        normals = flattenVertices (extractQuadNormals (unflattenVertices3 triangles))
+    createObject Triangles (Just triangles) (Just colors) Nothing (Just normals) Nothing Nothing
 
 createTexturedBox :: GLfloat -> IO (VertexArrayObject, Render, Dispose)
 createTexturedBox edgeSize = do

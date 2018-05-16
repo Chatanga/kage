@@ -1,4 +1,4 @@
-module Random
+module Common.Random
     (   RandomState
     ,   runRandom
     ,   runRandomIO

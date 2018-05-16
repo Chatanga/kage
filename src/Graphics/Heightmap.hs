@@ -1,4 +1,4 @@
-module Heightmap
+module Graphics.Heightmap
     ( Heightmap
     , indexToXY
     , xyToIndex
@@ -12,7 +12,7 @@ import Data.Ord
 import Data.Tuple
 import qualified Data.Vector.Storable as V
 
-import Misc
+import Common.Misc
 
 type Heightmap a = (Int, Int, V.Vector a)
 

@@ -1,4 +1,4 @@
-module Layouts (
+module Graphics.Layouts (
     fixedLayout,
     borderLayout,
     AnchorConstraint(..),
@@ -12,7 +12,7 @@ import Data.Tree.Zipper
 
 import Graphics.Rendering.OpenGL
 
-import View
+import Graphics.View
 
 ----------------------------------------------------------------------------------------------------
 

@@ -1,4 +1,4 @@
-module Shader
+module Graphics.Shader
     (   acquireProgramWithShaders'
     ,   acquireProgramWithShaders
     ,   createProgramWithShaders'
@@ -19,11 +19,12 @@ import System.FilePath
 import System.Log.Logger
 import qualified Text.Regex as RE
 
-import Debug
-import Ext.Program
-import Ext.Shader
-import FunctionalGL
-import Misc
+import Common.Debug
+import Common.Misc
+
+import Graphics.Ext.Program
+import Graphics.Ext.Shader
+import Graphics.FunctionalGL
 
 ----------------------------------------------------------------------------------------------------
 

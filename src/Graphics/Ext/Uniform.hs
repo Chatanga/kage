@@ -1,4 +1,4 @@
-module Ext.Uniform
+module Graphics.Ext.Uniform
     (   extActiveUniforms
     ,   extUniformLocation
     ) where
@@ -11,9 +11,9 @@ import Foreign.Storable
 import Graphics.GL
 import Graphics.Rendering.OpenGL.GL.Shaders.Uniform
 
-import Ext.Program
-import Ext.Variables
-import Ext.Utils
+import Graphics.Ext.Program
+import Graphics.Ext.Variables
+import Graphics.Ext.Utils
 
 --------------------------------------------------------------------------------
 

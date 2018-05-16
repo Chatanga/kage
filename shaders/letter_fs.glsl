@@ -4,12 +4,14 @@ uniform sampler2D sampler;
 
 in vec2 texCoord;
 
+// varying vec3 position;
+
 void main()
 {
     vec4 baseColor = vec4(0, 0, 0, 1);
 
     vec2 size = textureSize(sampler, 0);
-    float e = 0.15; // Need to be dynamically adjusted.
+    float e = gl_FragCoord.z / 10; // Crude
 
     float distAlphaMask = texture(sampler, texCoord).r;
 

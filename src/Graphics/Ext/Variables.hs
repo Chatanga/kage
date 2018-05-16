@@ -1,4 +1,4 @@
-module Ext.Variables (
+module Graphics.Ext.Variables (
     VariableType(..), unmarshalVariableType, activeVars
 ) where
 
@@ -11,8 +11,8 @@ import Graphics.GL
 
 import Graphics.Rendering.OpenGL (unpackUtf8)
 
-import Ext.Program
-import Ext.Utils
+import Graphics.Ext.Program
+import Graphics.Ext.Utils
 
 --------------------------------------------------------------------------------
 

@@ -1,4 +1,4 @@
-module Ext.Utils
+module Graphics.Ext.Utils
     (   marshalGLboolean
     ,   unmarshalGLboolean
     ,   stringQuery

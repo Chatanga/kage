@@ -1,4 +1,4 @@
-module Misc
+module Common.Misc
     ( for
     , divR
     , clamp

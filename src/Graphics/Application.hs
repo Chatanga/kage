@@ -1,5 +1,6 @@
-module Application (
-    runApplication
+module Graphics.Application (
+    runDefaultApplication,
+    runAnotherApplication
 ) where
 
 import Control.Applicative
@@ -17,11 +18,11 @@ import qualified Graphics.UI.GLFW as GLFW
 import Numeric (showGFloat)
 import System.Log.Logger
 
-import FunctionalGL
-import Layouts
-import Scene
-import View
-import World
+import Graphics.FunctionalGL
+import Graphics.Layouts
+import Graphics.Scene
+import Graphics.View
+import Graphics.World
 
 ----------------------------------------------------------------------------------------------------
 
@@ -56,8 +57,18 @@ sceneHandleEvent currentResources event treeLoc =
 
 ----------------------------------------------------------------------------------------------------
 
-runApplication :: String -> IO ()
-runApplication name = do
+runDefaultApplication :: String -> IO ()
+runDefaultApplication name = runApplication name createWorld createSceneUI
+
+runAnotherApplication :: String -> IO ()
+runAnotherApplication name = runApplication name createAnotherWorld createAnotherSceneUI
+
+runApplication
+    :: String
+    -> (ResourceIO World)
+    -> (IORef World -> IORef Context -> IORef ResourceMap -> SceneUI)
+    -> IO ()
+runApplication name worldBuilder sceneBuilder = do
     let (w , h) = (800, 600)
         size = GL.Size (fromIntegral w) (fromIntegral h)
 
@@ -86,29 +97,13 @@ runApplication name = do
     let resources0 = newResourceMap
 
     ((currentWorld, currentContext), resources1) <- flip runStateT resources0 $ do
-        currentWorld <- liftIO . newIORef =<< createWorld
+        currentWorld <- liftIO . newIORef =<< worldBuilder
         currentContext <- liftIO . newIORef =<< createContext
         return (currentWorld, currentContext)
 
     currentResources <- newIORef resources1
 
-    let masterScene = createScene DeferredRendering currentWorld currentContext
-        radarScene = createScene SimpleRendering currentWorld currentContext
-        [ssaoScene, positionScene, normalScene, albedoAndSpecularScene, shadowScene] =
-            map (`createColorBufferScene` currentContext) [0..4]
-
-    let handleEvent = sceneHandleEvent currentResources
-    uiRef <- newIORef . createUI $
-        Node (createSceneView False adaptativeLayout handleEvent Nothing)
-        [   Node (createSceneView True (anchorLayout [AnchorConstraint (Just 50) (Just 50) Nothing Nothing]) handleEvent (Just masterScene))
-            [   Node (createSceneView False (fixedLayout (GL.Size 250 250)) handleEvent  (Just radarScene)) []
-            ]
-        ,   Node (createSceneView False defaultLayout handleEvent (Just ssaoScene)) []
-        ,   Node (createSceneView False defaultLayout handleEvent (Just positionScene)) []
-        ,   Node (createSceneView False defaultLayout handleEvent (Just normalScene)) []
-        ,   Node (createSceneView False defaultLayout handleEvent (Just albedoAndSpecularScene)) []
-        ,   Node (createSceneView False defaultLayout handleEvent (Just shadowScene)) []
-        ]
+    uiRef <- newIORef (sceneBuilder currentWorld currentContext currentResources)
 
     sizeRef <- newIORef size
     quitRef <- newIORef False
@@ -172,16 +167,51 @@ mainLoop window worldRef uiRef sizeRef quitRef (frameCount, mt0, mt1) = do
     GL.get uiRef >>= animateUI frameDuration >>= ($=) uiRef
 
     ui <- GL.get uiRef
-    when (w > 0) $ liftIO $ do -- avoid an upcoming divide by zero
-        GL.clear [GL.ColorBuffer]
+    when (w > 0) $ do -- avoid an upcoming divide by zero
+        liftIO $ GL.clear [GL.ColorBuffer]
         renderViewTree size (uiRoot ui)
-        GLFW.swapBuffers window
+        liftIO $ GLFW.swapBuffers window
 
     liftIO GLFW.pollEvents
     shouldQuit <- liftIO $ (||) <$> GL.get quitRef <*> GLFW.windowShouldClose window
     if shouldQuit
         then liftIO $ infoM "Kage" "Exiting"
         else mainLoop window worldRef uiRef sizeRef quitRef timing
+
+createSceneUI
+    :: IORef World
+    -> IORef Context
+    -> IORef ResourceMap
+    -> SceneUI
+createSceneUI currentWorld currentContext currentResources = createUI ui where
+    masterScene = createScene DeferredRendering currentWorld currentContext
+    radarScene = createScene SimpleRendering currentWorld currentContext
+    [ssaoScene, positionScene, normalScene, albedoAndSpecularScene, shadowScene] =
+        map (`createColorBufferScene` currentContext) [0..4]
+
+    handleEvent = sceneHandleEvent currentResources
+
+    ui =
+        Node (createSceneView False adaptativeLayout handleEvent Nothing)
+        [   Node (createSceneView True (anchorLayout [AnchorConstraint (Just 50) (Just 50) Nothing Nothing]) handleEvent (Just masterScene))
+            [   Node (createSceneView False (fixedLayout (GL.Size 250 250)) handleEvent  (Just radarScene)) []
+            ]
+        ,   Node (createSceneView False defaultLayout handleEvent (Just ssaoScene)) []
+        ,   Node (createSceneView False defaultLayout handleEvent (Just positionScene)) []
+        ,   Node (createSceneView False defaultLayout handleEvent (Just normalScene)) []
+        ,   Node (createSceneView False defaultLayout handleEvent (Just albedoAndSpecularScene)) []
+        ,   Node (createSceneView False defaultLayout handleEvent (Just shadowScene)) []
+        ]
+
+createAnotherSceneUI
+    :: IORef World
+    -> IORef Context
+    -> IORef ResourceMap
+    -> SceneUI
+createAnotherSceneUI currentWorld currentContext currentResources = createUI ui where
+    masterScene = createScene SimpleRendering currentWorld currentContext
+    handleEvent = sceneHandleEvent currentResources
+    ui = Node (createSceneView True defaultLayout handleEvent (Just masterScene)) []
 
 animateUI :: Double -> SceneUI -> ResourceIO SceneUI
 animateUI frameDuration ui = do
@@ -193,16 +223,17 @@ animateUI frameDuration ui = do
         return view{ viewContent = c }
     return $ ui{ uiRoot = root' }
 
-renderViewTree :: GL.Size -> Tree (View (Maybe Scene)) -> IO ()
+renderViewTree :: GL.Size -> Tree (View (Maybe Scene)) -> ResourceIO ()
 renderViewTree screenSize tree = do
     let (GL.Size screenWidth screenHeigh) = screenSize
         view = rootLabel tree
     case viewContent view of
         Just scene -> do
             let (GL.Position x y, GL.Size w h) = viewLocalBounds view
-            GL.viewport $= (GL.Position x (screenHeigh - h - y), GL.Size w h)
-            GL.clear [GL.DepthBuffer]
+            liftIO $ GL.viewport $= (GL.Position x (screenHeigh - h - y), GL.Size w h)
+            liftIO $ GL.clear [GL.DepthBuffer]
             sceneRender scene (GL.Size w h)
-            GL.flush
+            liftIO GL.flush
         _ -> return ()
     mapM_ (renderViewTree screenSize) (subForest tree)
+

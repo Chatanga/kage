@@ -1,4 +1,4 @@
-module Ext.Shader
+module Graphics.Ext.Shader
     (   ExtShader(..)
     ,   createExtShader
     ,   extShaderSourceBS
@@ -20,7 +20,7 @@ import Foreign.Marshal.Utils (with)
 import Graphics.Rendering.OpenGL
 import qualified Graphics.GL as Raw
 
-import Ext.Utils
+import Graphics.Ext.Utils
 
 ----------------------------------------------------------------------------------------------------
 

@@ -1,4 +1,4 @@
-module Geometry (
+module Graphics.Geometry (
     BoundingInfo(..),
     Camera(..),
     near,
@@ -13,6 +13,8 @@ module Geometry (
     noTranslation,
     scaling,
     translating,
+    rotating,
+    --
     showV1,
     showV2,
     showV3,
@@ -73,22 +75,25 @@ toWorld (Size width height) (V2 x y) projection camera = rectify target where
 noRotation :: (Epsilon a, Floating a) => Quaternion a
 noRotation = axisAngle (V3 0 1 0) 0
 
-noTranslation :: Num a => V3 a
+noTranslation :: Floating a => V3 a
 noTranslation = V3 0 0 0
 
-scaling :: Num a => V3 a -> M44 a
+scaling :: Floating a => V3 a -> M44 a
 scaling (V3 sx sy sz) = V4
     (V4 sx 0 0 0)
     (V4 0 sy 0 0)
     (V4 0 0 sz 0)
     (V4 0 0 0 1)
 
-translating :: Num a => V3 a -> M44 a
+translating :: Floating a => V3 a -> M44 a
 translating (V3 dx dy dz) = V4
     (V4 1 0 0 dx)
     (V4 0 1 0 dy)
     (V4 0 0 1 dz)
     (V4 0 0 0 1)
+
+rotating :: (Epsilon a, Floating a) => V3 a -> a -> M44 a
+rotating axis angle = mkTransformation (axisAngle axis angle) noTranslation
 
 showV1 x = showGFloat (Just 2) (realToFrac x) ""
 showV2 (V2 x y) = showVn [x, y]

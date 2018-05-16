@@ -1,20 +1,25 @@
 {-# LANGUAGE ExistentialQuantification #-}
 
-module FunctionalGL
+module Graphics.FunctionalGL
     ( ResourceIO
     , ResourceMap
     , newResourceMap
     , acquireResourceWith
+    , acquireResourceWith'
     , releaseResource
     , releaseUnreclaimedResources
     , Stage(..)
     , ordinal
     , Render
     , Dispose
+    , skyBoxZOrder
+    , terrainZOrder
+    , defaultZOrder
+    , translucentZOrder
     , Renderable(..)
     , setUniform
     , getAndSet
-    , FunctionalGL.withState
+    , Graphics.FunctionalGL.withState
     , withBinding
     , withBuffer
     , withTexture2D
@@ -33,86 +38,104 @@ import Data.Maybe
 import Graphics.Rendering.OpenGL as GL
 import System.Log.Logger
 
-import Ext.Program
-import Ext.Shader
-import Ext.Uniform
+import Graphics.Ext.Program
+import Graphics.Ext.Shader
+import Graphics.Ext.Uniform
 
 ----------------------------------------------------------------------------------------------------
 
 type ResourceIO a = StateT ResourceMap IO a
 
-type ResourceMap = Map.Map String (Int, (Resource, IO ()))
+type ResourceMap = Map.Map String (Int, (Resource, Destructor))
+
+newtype Destructor = Destructor
+    {   destructorFunction :: ResourceIO ()
+    }
 
 data Resource
     = ResourceTO TextureObject
     | ResourceBO BufferObject
     | ResourceS Shader
     | ResourceES ExtShader
+    | ResourceR Renderable
 
 class AsResource a where
     toResource :: a -> Resource
     fromResource :: Resource -> Maybe a
-    deleteResource :: a -> IO ()
+    deleteResource :: a -> Destructor
 
 instance AsResource TextureObject where
     toResource = ResourceTO
     fromResource (ResourceTO to) = Just to
     fromResource _ = Nothing
-    deleteResource = deleteObjectName
+    deleteResource = Destructor . liftIO . deleteObjectName
 
 instance AsResource BufferObject where
     toResource = ResourceBO
-    fromResource (ResourceBO to) = Just to
+    fromResource (ResourceBO bo) = Just bo
     fromResource _ = Nothing
-    deleteResource = deleteObjectName
+    deleteResource = Destructor . liftIO . deleteObjectName
 
 instance AsResource Shader where
     toResource = ResourceS
-    fromResource (ResourceS to) = Just to
+    fromResource (ResourceS s) = Just s
     fromResource _ = Nothing
-    deleteResource = deleteObjectName
+    deleteResource = Destructor . liftIO . deleteObjectName
 
 instance AsResource ExtShader where
     toResource = ResourceES
-    fromResource (ResourceES to) = Just to
+    fromResource (ResourceES es) = Just es
     fromResource _ = Nothing
-    deleteResource = deleteObjectName
+    deleteResource = Destructor . liftIO . deleteObjectName
+
+instance AsResource Renderable where
+    toResource = ResourceR
+    fromResource (ResourceR r) = Just r
+    fromResource _ = Nothing
+    deleteResource = Destructor . renderableDispose
 
 newResourceMap = Map.empty
 
-acquireResourceWith :: (ObjectName a, AsResource a) => String -> IO a -> ResourceIO a
-acquireResourceWith key constructor = do
+acquireResourceWith :: AsResource a => String -> IO a -> ResourceIO a
+acquireResourceWith key constructor = acquireResourceWith' key (liftIO constructor)
+
+acquireResourceWith' :: AsResource a => String -> ResourceIO a -> ResourceIO a
+acquireResourceWith' key constructor = do
     resources <- S.get
     case Map.lookup key resources of
         Nothing -> do
-            name <- liftIO constructor
-            S.put $ Map.insert key (1, (toResource name, deleteResource name)) resources
-            return name
+            r <- constructor
+            liftIO $ debugM "Kage" $ "Creating resource " ++ show key
+            resources <- S.get
+            S.put $ Map.insert key (1, (toResource r, deleteResource r)) resources
+            return r
         Just (counter, (resource, destructor)) ->
             case fromResource resource of
-                Just name -> do
+                Just r -> do
                     S.put $ Map.insert key (counter + 1, (resource, destructor)) resources
-                    return name
+                    return r
                 Nothing -> error "Resource found with a different type"
 
 releaseResource :: String -> ResourceIO ()
 releaseResource key = do
     resources <- S.get
     case Map.lookup key resources of
-        Nothing -> error "Unknown resource"
+        Nothing -> error $ "Unknown resource " ++ show key
         Just (counter, (resource, destructor)) ->
             if counter > 1
                 then S.put $ Map.insert key (counter - 1, (resource, destructor)) resources
                 else do
-                    liftIO destructor
+                    liftIO $ debugM "Kage" $ "Releasing resource " ++ show key
+                    destructorFunction destructor
                     S.put $ Map.delete key resources
 
+-- TODO Some resources could be release many times now that Renderables are resources too.
 releaseUnreclaimedResources :: ResourceIO ()
 releaseUnreclaimedResources = do
     resources <- S.get :: ResourceIO ResourceMap
-    forM_ (Map.toList resources) $ \(key, (counter, (resource, destructor))) -> liftIO $ do
-        infoM "Kage" $ "Releasing unreclaimed resource " ++ show key
-        destructor
+    forM_ (Map.toList resources) $ \(key, (counter, (resource, destructor))) -> do
+        liftIO $ debugM "Kage" $ "Releasing unreclaimed resource " ++ show key
+        destructorFunction destructor
     S.put Map.empty
 
 ----------------------------------------------------------------------------------------------------
@@ -133,11 +156,17 @@ type Render = ExtProgram -> IO ()
 
 type Dispose = IO ()
 
+skyBoxZOrder = 10 :: Int
+terrainZOrder = 20 :: Int
+defaultZOrder = 30 :: Int
+translucentZOrder = 40 :: Int
+
 data Renderable = Renderable
     {   renderableProgram :: [(Stage, ExtProgram)] -- ^ Exposed to bind uniforms.
     ,   renderableVao :: VertexArrayObject -- ^ Exposed, but shouldn't ; only used to display normals.
     ,   renderableRender :: Render
     ,   renderableDispose :: ResourceIO ()
+    ,   renderableZOrder :: Int
     }
 
 instance Show Renderable where

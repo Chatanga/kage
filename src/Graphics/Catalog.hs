@@ -1,19 +1,16 @@
-module World (
-    FireBall(..),
-    DirectionLight(..),
-    PointLight(..),
-    World(..),
-    animateWorld,
-    --
+module Graphics.Catalog (
     createSpaceInvader,
     createFireBall,
+    createVectorDisplaying,
     createRenderableTerrain,
     createHeightmapNormalDisplaying,
     createNormalDisplaying,
     createGrass,
     createRenderableBoxSet,
+    createSolidBox,
     createTransparentBox,
     createSkyBox,
+    createGrid,
     createTesselatedPyramid,
     --
     createScreen,
@@ -37,90 +34,16 @@ import Graphics.Rendering.OpenGL
 import Linear
 import Numeric
 
-import Buffer
-import FunctionalGL as FGL
-import Geometry
-import Heightmap
-import Misc
-import Shader
-import Texture
-import Debug
+import Common.Debug
+import Common.Misc
 
-----------------------------------------------------------------------------------------------------
-
-{-
-    Inclure à la fois l’aspect physique, sonore et 3D.
-    Une sorte de modèle de présentation donc, partagé,
-    mais orienté vue.
--}
-
-----------------------------------------------------------------------------------------------------
-
-data FireBall = FireBall
-    {   fireBallPosition :: !(V3 GLfloat)
-    ,   fireBallDirection :: !(V3 GLfloat)
-    ,   fireBallColor :: !(Color3 GLfloat)
-    ,   fireBallAge :: !Double
-    }   deriving (Show)
-
-data DirectionLight = DirectionLight
-    {   directionLightColor :: !(Color3 GLfloat)
-    ,   directionLightDirection :: !(V3 GLfloat)
-    ,   directionLightAmbientIntensity :: !GLfloat
-    }   deriving (Show)
-
-data PointLight = PointLight
-    {   pointLightPosition :: !(V3 GLfloat)
-    ,   pointLightColor :: !(Color3 GLfloat)
-    }   deriving (Show)
-
-data AnyValue = AnyBoolean Bool | AnyString String | AnyInt Int | AnyFloat Float
-
-data Object = Object
-    {   objectTransformation :: !(Linear.M44 Float)
-    ,   objectBoundingInfo :: !(Maybe BoundingInfo)
-    ,   objectOptions :: [(String, AnyValue)] -- [(name, value)]
-    ,   objectRender :: Program -> IO ()
-    ,   objectDispose :: IO ()
-    -- Ajouter un aspect physique.
-    }
-
-instance Show Object where
-    show _ = "<Object>"
-
-data World = World
-    {   worldTerrain :: !(Heightmap Float, V3 Float)
-    ,   worldObjects :: ![Renderable] -- TODO as a tree ?
-    ,   worldFireBalls :: !(Renderable, [FireBall])
-    ,   worldSun :: !DirectionLight
-    ,   worldCameras :: ![(String, Camera)]
-    ,   worldElapsedTime :: !Double
-    }
-
-type DurationInMs = Double
-
-animateWorld :: DurationInMs -> World -> ResourceIO World
-animateWorld timeDelta world = return world' where
-
-    fireBalls = second (mapMaybe updateFireBall) (worldFireBalls world)
-    updateFireBall (FireBall p d c a)
-        | a < 10 = Just (FireBall (p + d/2) d c (a + timeDelta))
-        | otherwise = Nothing
-
-    sun = worldSun world
-    sun' = sun
-        { directionLightDirection = Linear.rotate
-            (axisAngle (V3 0 0 1) (realToFrac timeDelta / 4))
-            (directionLightDirection sun)
-        }
-
-    elapsedTime = worldElapsedTime world + timeDelta
-
-    world' = world
-        { worldFireBalls = fireBalls
-        , worldSun = sun'
-        , worldElapsedTime = elapsedTime
-        }
+import Graphics.Buffer
+import Graphics.Font
+import Graphics.FunctionalGL as FGL
+import Graphics.Geometry
+import Graphics.Heightmap
+import Graphics.Shader
+import Graphics.Texture
 
 ----------------------------------------------------------------------------------------------------
 
@@ -155,7 +78,20 @@ createFireBall = do
             FGL.withState depthMask Disabled .
             FGL.withState blendFunc (SrcAlpha, OneMinusSrcAlpha) .
             FGL.withState cullFace (Just Back) $ render p
-    return (Renderable [(DirectShadingStage, program)] vao render' (liftIO disposeSphere >> releaseProgram))
+    return (Renderable [(DirectShadingStage, program)] vao render' (liftIO disposeSphere >> releaseProgram) translucentZOrder)
+
+createVectorDisplaying :: V3 Float -> Color4 Float -> ResourceIO Renderable
+createVectorDisplaying v color = do
+    (vao, render, disposeVector) <- liftIO $ createVector v
+    (program, releaseProgram) <- acquireProgramWithShaders
+        [ ("vector_vs.glsl", VertexShader)
+        , ("vector_gs.glsl", GeometryShader)
+        , ("vector_fs.glsl", FragmentShader)
+        ]
+    let render' p = do
+            setUniform p "color" color
+            render p
+    return (Renderable [(DirectShadingStage, program)] vao render' (liftIO disposeVector >> releaseProgram) defaultZOrder)
 
 createRenderableTerrain :: Heightmap Float -> V3 Float -> ResourceIO Renderable
 createRenderableTerrain heightmap scale = do
@@ -189,20 +125,20 @@ createRenderableTerrain heightmap scale = do
             -}
             usingOrderedTextures p textures $ render p
 
-    return (Renderable programs vao render' releaseAll)
+    return (Renderable programs vao render' releaseAll terrainZOrder)
 
 createHeightmapNormalDisplaying :: Heightmap Float -> Renderable -> ResourceIO Renderable
 createHeightmapNormalDisplaying (w, h, _) = createNormalDisplaying (fromIntegral (w * h))
 
 createNormalDisplaying :: Int -> Renderable -> ResourceIO Renderable
-createNormalDisplaying pointCount (Renderable _ vao _ _) = do
+createNormalDisplaying pointCount (Renderable _ vao _ _ _) = do
     let render p = withBinding bindVertexArrayObject vao $ drawArrays Points 0 (fromIntegral pointCount)
     (program, releaseProgram) <- acquireProgramWithShaders
         [ ("normal_vs.glsl", VertexShader)
         , ("normal_gs.glsl", GeometryShader)
         , ("normal_fs.glsl", FragmentShader)
         ]
-    return (Renderable [(DirectShadingStage, program)] vao render releaseProgram)
+    return (Renderable [(DirectShadingStage, program)] vao render releaseProgram defaultZOrder)
 
 createGrass :: Heightmap Float -> V3 Float -> ResourceIO Renderable
 createGrass heightmap scale = do
@@ -236,7 +172,7 @@ createGrass heightmap scale = do
             releaseProgram
             sequence_ releaseTextures
 
-    return (Renderable [(DirectShadingStage, program)] vao render' releaseAll)
+    return (Renderable [(DirectShadingStage, program)] vao render' releaseAll 200)
 
 createRenderableBoxSet :: Float -> [V3 GLfloat] -> ResourceIO Renderable
 createRenderableBoxSet edgeSize translations = do
@@ -283,7 +219,19 @@ createRenderableBoxSet edgeSize translations = do
             setUniform p "materialSpecularPower" (20 :: GLfloat)
             usingOrderedTextures p textures (render p)
 
-    return (Renderable programs vao render' releaseAll)
+    return (Renderable programs vao render' releaseAll defaultZOrder)
+
+createSolidBox :: Float -> ResourceIO Renderable
+createSolidBox edgeSize = do
+    (vao, render, disposeBox) <- liftIO $ createBox edgeSize
+    (program, releaseProgram) <- acquireProgramWithShaders' "generic_vs.glsl" "solid_box_fs.glsl"
+
+    let render' p = do
+            setUniform p "materialSpecularIntensity" (5 :: GLfloat)
+            setUniform p "materialSpecularPower" (20 :: GLfloat)
+            render p
+
+    return (Renderable [(DirectShadingStage, program)] vao render' (liftIO disposeBox >> releaseProgram) defaultZOrder)
 
 createTransparentBox :: Float -> ResourceIO Renderable
 createTransparentBox edgeSize = do
@@ -303,7 +251,7 @@ createTransparentBox edgeSize = do
                 FGL.withState depthMask Disabled .
                 FGL.withState cullFace Nothing $ render p
 
-    return (Renderable [(DirectShadingStage, program)] vao render' (liftIO disposeBox >> releaseProgram))
+    return (Renderable [(DirectShadingStage, program)] vao render' (liftIO disposeBox >> releaseProgram) translucentZOrder)
 
 createSkyBox :: ResourceIO Renderable
 createSkyBox = do
@@ -332,7 +280,21 @@ createSkyBox = do
             releaseProgram
             sequence_ releaseTextures
 
-    return (Renderable [(DirectShadingStage, program)] vao render' releaseAll)
+    return (Renderable [(DirectShadingStage, program)] vao render' releaseAll skyBoxZOrder)
+
+createGrid :: ResourceIO Renderable
+createGrid = do
+    (vao, render, disposeSquare) <- liftIO $ createSquare (0, 0) 100
+    (program, releaseProgram) <- acquireProgramWithShaders' "grid_vs.glsl" "grid_fs.glsl"
+
+    let render' =
+            FGL.withState blend Enabled .
+            FGL.withState blendFunc (SrcAlpha, OneMinusSrcAlpha) .
+            FGL.withState depthMask Disabled .
+            FGL.withState cullFace Nothing .
+            render
+
+    return (Renderable [(DirectShadingStage, program)] vao render' (liftIO disposeSquare >> releaseProgram) translucentZOrder)
 
 createTesselatedPyramid :: ResourceIO Renderable
 createTesselatedPyramid = do
@@ -350,7 +312,7 @@ createTesselatedPyramid = do
                 FGL.withState cullFace Nothing $
                 render p
 
-    return (Renderable [(DirectShadingStage, program)] vao render' (liftIO dispose >> acquireProgram))
+    return (Renderable [(DirectShadingStage, program)] vao render' (liftIO dispose >> acquireProgram) defaultZOrder)
 
 ----------------------------------------------------------------------------------------------------
 
@@ -382,4 +344,4 @@ _createScreen :: String -> ResourceIO Renderable
 _createScreen suffix = do
     (vao, render, disposeSquare) <- liftIO $ createSquare (0, 0) 2
     (program, releaseProgram) <- acquireProgramWithShaders' "screen_vs.glsl" ("screen"++ suffix ++"_fs.glsl")
-    return (Renderable [(DirectShadingStage, program)] vao render (liftIO disposeSquare >> releaseProgram))
+    return (Renderable [(DirectShadingStage, program)] vao render (liftIO disposeSquare >> releaseProgram) defaultZOrder)

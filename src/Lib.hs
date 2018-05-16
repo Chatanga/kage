@@ -9,8 +9,8 @@ import System.Log.Handler.Simple
 import System.Log.Handler (setFormatter)
 import System.Log.Formatter
 
-import Application
-import Font
+import Graphics.Application
+import Graphics.Font
 
 kickOut = do
     hSetBuffering stdout NoBuffering
@@ -23,7 +23,8 @@ kickOut = do
     let line = replicate 80 '─'
     infoM "Kage" line
 
-    runApplication "Playground"
+    -- runDefaultApplication "Playground"
+    runAnotherApplication "Playground"
 
     infoM "Kage" line
 

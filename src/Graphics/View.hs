@@ -1,4 +1,4 @@
-module View (
+module Graphics.View (
     Event(..),
     EventAction(..),
     ViewHandleEvent,

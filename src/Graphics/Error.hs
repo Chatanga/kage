@@ -1,4 +1,4 @@
-module Error (
+module Graphics.Error (
     printErrors
 ) where
 

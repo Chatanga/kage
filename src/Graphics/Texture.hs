@@ -1,4 +1,4 @@
-module Texture
+module Graphics.Texture
     ( acquireImage
     , withAcquiredImage
     , loadImage
@@ -19,10 +19,11 @@ import qualified Foreign as F
 import Graphics.Rendering.OpenGL
 import System.Log.Logger
 
-import Debug
-import FunctionalGL
-import Heightmap
-import Misc
+import Common.Debug
+import Common.Misc
+
+import Graphics.FunctionalGL
+import Graphics.Heightmap
 
 ----------------------------------------------------------------------------------------------------
 

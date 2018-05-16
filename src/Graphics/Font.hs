@@ -1,4 +1,4 @@
-module Font (
+module Graphics.Font (
     createText,
     createDistanceFieldAtlas,
     createDistanceFieldLetter
@@ -38,12 +38,13 @@ import Graphics.Rendering.FreeType.Internal.GlyphSlot (FT_GlyphSlot, format, lin
 
 import Linear as LP hiding (distance)
 
-import Debug
-import Error
-import FunctionalGL as FGL
-import Shader
-import Texture
-import Buffer
+import Common.Debug
+
+import Graphics.Error
+import Graphics.FunctionalGL as FGL
+import Graphics.Shader
+import Graphics.Texture
+import Graphics.Buffer
 
 ----------------------------------------------------------------------------------------------------
 
@@ -92,6 +93,7 @@ createText position up advance text = do
         vao
         render'
         (disposeTexture >> disposeProgram >> liftIO dispose)
+        translucentZOrder
 
 ----------------------------------------------------------------------------------------------------
 
