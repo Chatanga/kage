@@ -1,37 +1,69 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+
 module Physics.Aircraft (
     Aircraft(..),
     mkAircraft,
     updateAircraft
 ) where
 
-import Graphics.Rendering.OpenGL
+import Data.List
+import qualified Graphics.Rendering.OpenGL as GL
 import Linear
 
+import Common.Debug as Debug
 import Physics.RigidBody
 
 ----------------------------------------------------------------------------------------------------
 
 data Wing = Wing
-    {   position :: V3 Float -- in body space (relative to the CG)
-    ,   orientation :: Quaternion Float -- in body space
-    ,   chord :: Float
-    ,   span :: Float
+    {   wingPosition :: V3 Float -- in body space (relative to the CG)
+    ,   wingOrientation :: Quaternion Float -- in body space
+    -- ,   chord :: Float
+    -- ,   span :: Float
     ,   control :: Aircraft -> Float
     ,   chordAirfoilLiftCoef :: Float -> Float -- angle of attack -> CL
     ,   spanAirfoilLiftCoef :: Float -> Float -- angle of attack -> CL
     }
 
-generateForces :: Wing -> Aircraft -> Aircraft
-generateForces = undefined
+mkWing chord span = undefined where
+    {-
+    l(x) = exp (sin x) - 0.75
+
+    l(-0.25) = 0
+    l(0) = 0.25
+    l(0.75) = 2
+    l(2.75) = 0
+    -}
+    cl aoa = exp (sin aoa) - 0.75
 
 data Aircraft = Aircraft
     {   aircraftBody :: !(RigidBody Float)
     ,   aircraftBarycenter :: V3 Float
+    ,   aircraftWings :: [Wing]
     ,   aircraftThrustControl :: Float
     ,   aircraftAileronControl :: Float
     ,   aircraftElevatorControl :: Float
     ,   aircraftRudderControl :: Float
-    }   deriving (Show)
+    }
+
+inverse :: Floating a => Quaternion a -> Quaternion a
+inverse = undefined -- https://www.3dgep.com/understanding-quaternions/#Quaternion_Inverse
+
+airDensity = 1.225 -- kg/m3
+
+generateForces :: Wing -> RigidBody Float -> RigidBody Float
+generateForces wing body = body' where
+    -- The aircraft angular speed is negligible compared to its velocity and hence ignored.
+    -- v: velocity in the wing space
+    v@(V3 sx sy sz) = inverse (wingOrientation wing) `Linear.rotate` vectorToLocalSpace body (velocity body)
+    -- aoa: angle of attack
+    aoa = acos (normalize v `dot` unit _z)
+    coefLiftX = chordAirfoilLiftCoef wing aoa
+    coefLiftY = spanAirfoilLiftCoef wing aoa
+    coefLift = (coefLiftX * sx + coefLiftY * sy) / (sx + sy)
+    lift = Linear.normalize (v `cross` unit _x) ^* (coefLift * airDensity / norm v^2)
+    drag = v ^* (-1)
+    body' = foldl (\b f -> addForceAtBodyPoint b f (wingPosition wing)) body [lift, drag]
 
 mkAircraft = Aircraft
             (calculateDerivedData $ RigidBody
@@ -44,6 +76,7 @@ mkAircraft = Aircraft
                 []
                 [])
             barycenter
+            []
             0 0 0 0
     where
         {- Nieuport 10B (/kg)
@@ -64,4 +97,8 @@ mkAircraft = Aircraft
 
 updateAircraft :: Double -> Aircraft -> Aircraft
 updateAircraft durationInMs aircraft = aircraft{ aircraftBody = body } where
-    body = integrate (realToFrac durationInMs) (addForce (aircraftBody aircraft) (V3 0 0 (-gEarth)*0))
+    body = foldl' (flip id) (aircraftBody aircraft) $
+        map generateForces (aircraftWings aircraft) ++
+        [ \body -> addForce body (V3 0 0 (-gEarth / inverseMass body))
+        , integrate (realToFrac durationInMs)
+        ]

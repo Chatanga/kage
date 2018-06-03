@@ -26,13 +26,28 @@ Technical notes
 
 Despite the OpenGL package (3.0.1.0) stating it supports version 4.5, it is only the case for the underlying raw binding. The higher level Haskell binding seems to lack some features, at least regarding Shaders (compute, separate binding). In order to further explore the OpenGL API, I've introduced a `Ext` module. It cannibalizes a minimal set of hidden things from the `Graphics.Rendering.OpenGL` package to be able to introduce some changes: `ExtShader`, `ExtProgram`...
 
-Hardware
---------
+Dependencies
+------------
 
-My code works at home, that is on a Linux distro and a AMD RX 470 (free AMDGPU driver).
+Since a good deal of Haskell packages are just wrappers on native libraries, `stack build` will probably ends up complaining about missing libraries on your system. On mine (Debian based), here is the list of things I’ve had to install:
 
+```
+$ sudo apt-get install mesa-common-dev libgl1-mesa-dev libxi-dev libxrandr-dev libxcursor-dev libxinerama-dev libglu-dev zlib1g-dev
+```
+
+Lastly, my rendering hardware is a AMD RX 470 with the free AMDGPU driver. No doubt it will work on most graphic cards supporting the OpenGL 4.3 Core Profile.
+
+On Linux Mint 18.1:
 ```
 Renderer: Gallium 0.4 on AMD POLARIS10 (DRM 3.3.0 / 4.8.0-41-generic, LLVM 4.0.0)
 OpenGL version: 4.5 (Core Profile) Mesa 17.1.2
 Shading language version: 4.50
 ```
+
+Then currently on Ubuntu 18.04:
+```
+Renderer: AMD Radeon (TM) RX 470 Graphics (POLARIS10 / DRM 3.23.0 / 4.15.0-22-generic, LLVM 6.0.0)
+OpenGL version: 4.5 (Core Profile) Mesa 18.0.0-rc5
+Shading language version: 4.50
+```
+

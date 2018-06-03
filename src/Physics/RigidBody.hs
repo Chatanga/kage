@@ -1,8 +1,15 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+
 module Physics.RigidBody (
     gEarth,
     mkCuboidInertiaMatrix,
     mkCompositeCuboidInertiaMatrix,
     RigidBody(..),
+    affineInverse,
+    positionToLocalSpace,
+    positionToWorldSpace,
+    vectorToLocalSpace,
+    vectorToWorldSpace,
     calculateDerivedData,
     integrate,
     addForce,
