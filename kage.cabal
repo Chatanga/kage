@@ -1,92 +1,145 @@
+-- This file has been generated from package.yaml by hpack version 0.28.2.
+--
+-- see: https://github.com/sol/hpack
+--
+-- hash: 215a186489c07bd2aed2f8ee4a6113c8f43ac32c807ad386db3a1ce54c29757d
+
 name:           kage
 version:        1.0
-cabal-version:  >=1.10
-build-type:     Simple
-license:        MIT
-license-file:   LICENSE
+synopsis:       A sandbox for playing with Haskell, OpenGL, Physics, AI, etc.
+category:       Graphics
 homepage:       https://github.com/Chatanga/kage#readme
+bug-reports:    https://github.com/Chatanga/kage/issues
 author:         Florent Lioult
 maintainer:     florent@hihan.org
-copyright:      2017 Florent Lioult
-category:       Graphics
-synopsis:       A sandbox for playing with Haskell, OpenGL, Physics, AI, etc.
+license-file:   LICENSE
+build-type:     Simple
+cabal-version:  >= 1.10
 
 source-repository head
-    type: git
-    location: https://github.com/Chatanga/kage
+  type: git
+  location: https://github.com/Chatanga/kage
 
 library
-    hs-source-dirs: src
-    exposed-modules:
-        Lib
-    other-modules:
-        Common.Debug
-        Common.Misc
-        Common.Random
-        Graphics.Catalog
-        Graphics.Color
-        Graphics.Ext.Program
-        Graphics.Ext.Shader
-        Graphics.Ext.Uniform
-        Graphics.Ext.Utils
-        Graphics.Ext.Variables
-        Graphics.Application
-        Graphics.Buffer
-        Graphics.Error
-        Graphics.Font
-        Graphics.FunctionalGL
-        Graphics.Geometry
-        Graphics.Heightmap
-        Graphics.Layouts
-        Graphics.Scene
-        Graphics.Shader
-        Graphics.Texture
-        Graphics.View
-        Graphics.World
-        Physics.Aircraft
-        Physics.RigidBody
-    build-depends:
-        base >=4.7 && <5,
-        containers,
-        GLFW-b,
-        JuicyPixels,
-        OpenGL,
-        OpenGLRaw,
-        ObjectName,
-        StateVar,
-        filepath,
-        hslogger,
-        linear,
-        mtl,
-        random,
-        text,
-        bytestring,
-        regex-compat,
-        time,
-        vector,
-        freetype2,
-        parallel,
-        rosezipper,
-        lens
-    default-language: Haskell2010
+  exposed-modules:
+      Common.Debug
+      Common.Misc
+      Common.Random
+      Graphics.Application
+      Graphics.Buffer
+      Graphics.Catalog
+      Graphics.Color
+      Graphics.Error
+      Graphics.Ext.Program
+      Graphics.Ext.Shader
+      Graphics.Ext.Uniform
+      Graphics.Ext.Utils
+      Graphics.Ext.Variables
+      Graphics.Font
+      Graphics.FunctionalGL
+      Graphics.Geometry
+      Graphics.Heightmap
+      Graphics.Layouts
+      Graphics.Scene
+      Graphics.Shader
+      Graphics.Texture
+      Graphics.View
+      Graphics.World
+      Lib
+      Physics.Aircraft
+      Physics.RigidBody
+  other-modules:
+      Paths_kage
+  hs-source-dirs:
+      src
+  build-depends:
+      GLFW-b
+    , JuicyPixels
+    , ObjectName
+    , OpenGL
+    , OpenGLRaw
+    , StateVar
+    , base >=4.7 && <5
+    , bytestring
+    , containers
+    , filepath
+    , freetype2
+    , hslogger
+    , lens
+    , linear
+    , mtl
+    , parallel
+    , random
+    , regex-compat
+    , rosezipper
+    , text
+    , time
+    , vector
+  default-language: Haskell2010
 
 executable kage-exe
-    main-is: Main.hs
-    build-depends:
-        base,
-        kage
-    default-language: Haskell2010
-    hs-source-dirs: app
-    ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  main-is: Main.hs
+  other-modules:
+      Paths_kage
+  hs-source-dirs:
+      app
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      GLFW-b
+    , JuicyPixels
+    , ObjectName
+    , OpenGL
+    , OpenGLRaw
+    , StateVar
+    , base >=4.7 && <5
+    , bytestring
+    , containers
+    , filepath
+    , freetype2
+    , hslogger
+    , kage
+    , lens
+    , linear
+    , mtl
+    , parallel
+    , random
+    , regex-compat
+    , rosezipper
+    , text
+    , time
+    , vector
+  default-language: Haskell2010
 
 test-suite kage-test
-    type: exitcode-stdio-1.0
-    main-is: Spec.hs
-    build-depends:
-        base,
-        kage,
-        linear
-    default-language: Haskell2010
-    hs-source-dirs: test
-    ghc-options: -threaded -rtsopts -with-rtsopts=-N
-
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      Paths_kage
+  hs-source-dirs:
+      test
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      GLFW-b
+    , JuicyPixels
+    , ObjectName
+    , OpenGL
+    , OpenGLRaw
+    , StateVar
+    , base >=4.7 && <5
+    , bytestring
+    , containers
+    , filepath
+    , freetype2
+    , hslogger
+    , kage
+    , lens
+    , linear
+    , mtl
+    , parallel
+    , random
+    , regex-compat
+    , rosezipper
+    , text
+    , time
+    , vector
+  default-language: Haskell2010

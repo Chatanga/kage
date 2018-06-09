@@ -1,0 +1,3 @@
+#! /bin/bash
+VOGL_PATH=/home/antares/Internet/Productions/Code/vogl/vogl_build
+$VOGL_PATH/vogleditor64 vogltrace.bin

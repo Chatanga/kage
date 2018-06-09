@@ -23,8 +23,8 @@ kickOut = do
     let line = replicate 80 '─'
     infoM "Kage" line
 
-    runDefaultApplication "Playground"
-    -- runAnotherApplication "Playground"
+    -- runDefaultApplication "Playground"
+    runAnotherApplication "Playground"
 
     infoM "Kage" line
 

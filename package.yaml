@@ -1,0 +1,58 @@
+name:           kage
+version:        1.0
+license-file:   LICENSE
+author:         Florent Lioult
+maintainer:     florent@hihan.org
+category:       Graphics
+synopsis:       A sandbox for playing with Haskell, OpenGL, Physics, AI, etc.
+
+github: Chatanga/kage
+
+dependencies:
+- base >= 4.7 && < 5
+- containers
+- GLFW-b
+- JuicyPixels
+- OpenGL
+- OpenGLRaw
+- ObjectName
+- StateVar
+- filepath
+- hslogger
+- linear
+- mtl
+- random
+- text
+- bytestring
+- regex-compat
+- time
+- vector
+- freetype2
+- parallel
+- rosezipper
+- lens
+
+library:
+  source-dirs: src
+
+executables:
+  kage-exe:
+    main:                Main.hs
+    source-dirs:         app
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - kage
+
+tests:
+  kage-test:
+    main:                Spec.hs
+    source-dirs:         test
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - kage

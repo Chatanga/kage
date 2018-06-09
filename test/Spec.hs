@@ -1,9 +1,48 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+
 import Linear
+
+import Physics.Aircraft
+import Physics.RigidBody
 
 ----------------------------------------------------------------------------------------------------
 
 main :: IO ()
 main = do
+    let body = (calculateDerivedData $ RigidBody
+            (1.0 / mass)
+            (inv33 inertia)
+            0.95 0.95
+            p o v r
+            undefined
+            undefined
+            []
+            [])
+        engine = (V3 1.5 0 0, (V3 3 3 3, 290))
+        fuselage = (V3 (-7.5) 0 0, (V3 15 3 3, 400))
+        mass = 690
+        (inertia, barycenter) = mkCompositeCuboidInertiaMatrix [engine, fuselage]
+        p = V3 0 0 0
+        o = axisAngle (V3 0 0 1) 0
+        v = V3 2 0 0
+        r = V3 0 0 0
+        noRot = axisAngle (unit _x) 0
+        wing = mkWing (V3 3 (-6) 1.5) noRot (const 0) 10 5
+        body' = generateForces wing body
+    putStrLn ""
+    putStrLn "--------------------------------------------------------------------------------"
+    putStrLn $ "barycenter = " ++ show barycenter
+    putStrLn $ "iitw = " ++ show inertia
+    putStrLn $ "transformMatrix = " ++ show (transformMatrix body)
+    putStrLn $ "noRot = " ++ show noRot
+    putStrLn $ "forcesAccum = " ++ show (forcesAccum body')
+    putStrLn $ "torquesAccum = " ++ show (torquesAccum body')
+    putStrLn "--------------------------------------------------------------------------------"
+
+----------------------------------------------------------------------------------------------------
+
+playWithQuaternions :: IO ()
+playWithQuaternions = do
     let rot = pi / 10 :: Double
         axis = normalize (V3 2 (-6) 4) :: V3 Double
         q = axisAngleQ axis rot :: Q Double

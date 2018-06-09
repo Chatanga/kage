@@ -2,30 +2,31 @@
 
 module Physics.Aircraft (
     Aircraft(..),
+    Wing(..),
+    mkWing,
+    generateForces,
     mkAircraft,
     updateAircraft
 ) where
 
 import Data.List
-import qualified Graphics.Rendering.OpenGL as GL
 import Linear
 
-import Common.Debug as Debug
+import qualified Common.Debug as D
 import Physics.RigidBody
 
 ----------------------------------------------------------------------------------------------------
 
 data Wing = Wing
-    {   wingPosition :: V3 Float -- in body space (relative to the CG)
-    ,   wingOrientation :: Quaternion Float -- in body space
-    -- ,   chord :: Float
-    -- ,   span :: Float
+    {   wingPosition :: !(V3 Float) -- in body space (relative to the CG)
+    ,   wingOrientation :: !(Quaternion Float) -- in body space
     ,   control :: Aircraft -> Float
     ,   chordAirfoilLiftCoef :: Float -> Float -- angle of attack -> CL
     ,   spanAirfoilLiftCoef :: Float -> Float -- angle of attack -> CL
     }
 
-mkWing chord span = undefined where
+mkWing :: V3 Float -> Quaternion Float -> (Aircraft -> Float) -> Float -> Float -> Wing
+mkWing position orientation control chord span = Wing position orientation control chordCoef spanCoef where
     {-
     l(x) = exp (sin x) - 0.75
 
@@ -34,7 +35,8 @@ mkWing chord span = undefined where
     l(0.75) = 2
     l(2.75) = 0
     -}
-    cl aoa = exp (sin aoa) - 0.75
+    chordCoef aoa = exp (sin aoa) - 0.75
+    spanCoef aoa = exp (sin aoa) - 0.75
 
 data Aircraft = Aircraft
     {   aircraftBody :: !(RigidBody Float)
@@ -46,16 +48,18 @@ data Aircraft = Aircraft
     ,   aircraftRudderControl :: Float
     }
 
-inverse :: Floating a => Quaternion a -> Quaternion a
-inverse = undefined -- https://www.3dgep.com/understanding-quaternions/#Quaternion_Inverse
+-- https://www.3dgep.com/understanding-quaternions/#Quaternion_Inverse
+inverse :: (Conjugate a, RealFloat a) => Quaternion a -> Quaternion a
+inverse = conjugate
 
+airDensity :: Float
 airDensity = 1.225 -- kg/m3
 
 generateForces :: Wing -> RigidBody Float -> RigidBody Float
 generateForces wing body = body' where
     -- The aircraft angular speed is negligible compared to its velocity and hence ignored.
     -- v: velocity in the wing space
-    v@(V3 sx sy sz) = inverse (wingOrientation wing) `Linear.rotate` vectorToLocalSpace body (velocity body)
+    v@(V3 sx sy _) = inverse (wingOrientation wing) `Linear.rotate` vectorToLocalSpace body (velocity body)
     -- aoa: angle of attack
     aoa = acos (normalize v `dot` unit _z)
     coefLiftX = chordAirfoilLiftCoef wing aoa
@@ -65,8 +69,9 @@ generateForces wing body = body' where
     drag = v ^* (-1)
     body' = foldl (\b f -> addForceAtBodyPoint b f (wingPosition wing)) body [lift, drag]
 
+mkAircraft :: Aircraft
 mkAircraft = Aircraft
-            (calculateDerivedData $ RigidBody
+    (calculateDerivedData $ RigidBody
                 (1.0 / mass) -- inverseMass
                 (inv33 inertia) -- inverseInertiaTensor
                 0.95 0.95
@@ -76,9 +81,16 @@ mkAircraft = Aircraft
                 []
                 [])
             barycenter
-            []
+            [   mkWing (V3 3 (-6) 1.5) noRot aircraftAileronControl 10 5
+            ,   mkWing (V3 3 6 1.5) noRot (negate . aircraftAileronControl) 10 5
+            ,   mkWing (V3 (-7.5) (-3.5) 1.5) noRot aircraftElevatorControl 4 3
+            ,   mkWing (V3 (-7.5) 3.5 1.5) noRot (negate . aircraftElevatorControl) 4 3
+            ,   mkWing (V3 (-7.5) 0 2.5) xRot90 aircraftRudderControl 4 3
+            ]
             0 0 0 0
     where
+        noRot = axisAngle (unit _x) 0
+        xRot90 = axisAngle (unit _x) (pi / 2)
         {- Nieuport 10B (/kg)
         cellule     150
         engine      290
@@ -99,6 +111,6 @@ updateAircraft :: Double -> Aircraft -> Aircraft
 updateAircraft durationInMs aircraft = aircraft{ aircraftBody = body } where
     body = foldl' (flip id) (aircraftBody aircraft) $
         map generateForces (aircraftWings aircraft) ++
-        [ \body -> addForce body (V3 0 0 (-gEarth / inverseMass body))
+        [ \b -> addForce b (V3 0 0 (-gEarth / inverseMass b))
         , integrate (realToFrac durationInMs)
         ]

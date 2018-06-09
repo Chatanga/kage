@@ -1,4 +1,0 @@
-#! /bin/bash
-rm -f debug.log
-#stack exec kage-exe -- +RTS -N4
-stack exec kage-exe
