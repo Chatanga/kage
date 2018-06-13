@@ -1,5 +1,5 @@
-.vscode
-.stack-work
+.*
 debug.log
+kage.cabal
 shadowmap.png
 vogltrace.bin

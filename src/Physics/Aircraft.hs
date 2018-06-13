@@ -59,14 +59,14 @@ generateForces :: Wing -> RigidBody Float -> RigidBody Float
 generateForces wing body = body' where
     -- The aircraft angular speed is negligible compared to its velocity and hence ignored.
     -- v: velocity in the wing space
-    v@(V3 sx sy _) = inverse (wingOrientation wing) `Linear.rotate` vectorToLocalSpace body (velocity body)
+    v@(V3 sx sy _) = D.trace "v" $ inverse (wingOrientation wing) `Linear.rotate` vectorToLocalSpace body (velocity body)
     -- aoa: angle of attack
-    aoa = acos (normalize v `dot` unit _z)
-    coefLiftX = chordAirfoilLiftCoef wing aoa
-    coefLiftY = spanAirfoilLiftCoef wing aoa
-    coefLift = (coefLiftX * sx + coefLiftY * sy) / (sx + sy)
-    lift = Linear.normalize (v `cross` unit _x) ^* (coefLift * airDensity / norm v^2)
-    drag = v ^* (-1)
+    aoa = D.trace "aoa" $ pi / 2 - acos (normalize v `dot` unit _z)
+    coefLiftX = D.trace "coefLiftX" $ chordAirfoilLiftCoef wing aoa
+    coefLiftY = D.trace "coefLiftY" $ spanAirfoilLiftCoef wing aoa
+    coefLift = D.trace "coefLift" $ (coefLiftX * sx + coefLiftY * sy) / (sx + sy)
+    lift = D.trace "lift" $ Linear.normalize (D.trace "X" $ v `cross` unit _x) ^* (coefLift * airDensity / norm v^2)
+    drag = D.trace "drag" $ v ^* (-1)
     body' = foldl (\b f -> addForceAtBodyPoint b f (wingPosition wing)) body [lift, drag]
 
 mkAircraft :: Aircraft
@@ -104,7 +104,7 @@ mkAircraft = Aircraft
         (inertia, barycenter) = mkCompositeCuboidInertiaMatrix [engine, fuselage]
         p = V3 0 0 0
         o = axisAngle (V3 0 0 1) 0
-        v = V3 0 0 0
+        v = V3 10 0 0
         r = V3 0 0 0
 
 updateAircraft :: Double -> Aircraft -> Aircraft
