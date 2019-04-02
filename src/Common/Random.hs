@@ -6,7 +6,7 @@ module Common.Random
     ,   getRandomR
     ) where
 
-import Control.Applicative
+import Control.Applicative()
 import Control.Monad.State
 import System.Random
 
@@ -27,7 +27,7 @@ getRandom = do
     return v
 
 getRandomR :: Random a => (a, a) -> RandomState a
-getRandomR (min, max) = do
-    (v, g) <- randomR (min, max) <$> get
+getRandomR (minValue, maxValue) = do
+    (v, g) <- randomR (minValue, maxValue) <$> get
     put g
     return v

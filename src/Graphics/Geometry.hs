@@ -36,6 +36,7 @@ data BoundingInfo
     = BoundingSphere (Linear.V3 Float) Float -- center radius
     | OrthoBoundingBox (Linear.V3 Float) (Linear.V3 Float) -- center (witdh, height, depth)
 
+-- See https://en.wikipedia.org/wiki/Horizontal_coordinate_system
 data Camera = Camera
     {   cameraPosition :: !(V3 GLfloat)
     ,   cameraAltitude :: !GLfloat

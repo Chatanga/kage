@@ -8,16 +8,18 @@ module Common.Misc
     , adapt
     ) where
 
-import Control.Monad
+import Control.Monad()
 import Data.Maybe
 
 ----------------------------------------------------------------------------------------------------
 
+for :: [a] -> (a -> b) -> [b]
 for = flip map
 
 divR :: (Real a, Real b, RealFloat c) => a -> b -> c
 divR a b = realToFrac a / realToFrac b
 
+clamp :: Ord a => a -> a -> a -> a
 clamp minValue maxValue = max minValue . min maxValue
 
 doNothing :: IO ()

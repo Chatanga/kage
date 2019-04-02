@@ -1,7 +1,7 @@
-Kage / かげ
-==========
+Kage / 陰 (かげ)
+================
 
-A personal sandbox for playing with Haskell, (post) modern OpenGL (4.3 Core Profile actually), physics simulation and, quite marginally, Japanese ("kage" means "shadow").
+A personal sandbox for playing with Haskell, (post) modern OpenGL (4.3 Core Profile actually), physics simulation and, quite marginally, Japanese ("kage" means "shade" here).
 
 Even if I usually take care of committing the project in a working state, this project is hardly a source of authority regarding the aforementioned themes. It could change in a (far) future, but, at this time, I'm afraid it's mostly junk code. That being said, the Haskell OpenGL binding is severely lacking in documentation. It's not a problem for the low-level raw binding (OpenGLRaw), which is essentially a one-to-one translation of the C API, but it is sometime frustrating for the more Haskellish binding (OpenGL) based on it. Having an existing code example which works is always helpful in this case, just to pick the right function names and way of passing some parameters (texture, buffer...). Beyond that, don't look too closely at the code, both from a Haskell and OpenGL perspective.
 
@@ -10,14 +10,12 @@ Even if I usually take care of committing the project in a working state, this p
 Inspiration
 -----------
 
-Regarding the OpenGL part, I generally get inspiration from the two sites:
+Regarding the OpenGL part, I’ve get my inspiration from the two sites:
 
 -   [MBSoftWorks](http://www.mbsoftworks.sk/index.php?page=tutorials&series=1)
 -   [LearnOpenGL](https://learnopengl.com/)
 
-I don't know if they are the best sources (they are simpler to start with than the OpenGL SuperBible at least),
-but since some shader parts and resources actually come from these places,
-better give to Caesar what is Caesar's.
+I don't know if they are the best sources (they are simpler to start with than the [OpenGL SuperBible](http://www.openglsuperbible.com) at least), but since some shader parts and resources actually come from these places, better give to Caesar what is Caesar's.
 
 The new part related to physics simulation is heavily inspired by the *Game Physics Engine Development* book from Ian Millington (whose [Cylone engine](https://github.com/idmillington/cyclone-physics/) is on GitHub).
 

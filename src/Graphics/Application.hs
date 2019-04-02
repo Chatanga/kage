@@ -35,7 +35,7 @@ createSceneView hasFocus layout handleEvent content = (createView content)
     , viewHasFocus = hasFocus
     }
 
-{- | Handle an event through simple delegation to its inner content scene, if any. A scene being not
+{- | Handle an event through simple delegation to its inner content scene, if any. A scene being not
 aware of the view holding it, any change will stay local (excepted for a Nothing interpreted as a
 closure).
 -}
@@ -177,6 +177,9 @@ mainLoop window worldRef uiRef sizeRef quitRef (frameCount, mt0, mt1) = do
     if shouldQuit
         then liftIO $ infoM "Kage" "Exiting"
         else mainLoop window worldRef uiRef sizeRef quitRef timing
+
+mf :: (b -> Bool) -> (a -> b) -> [a] -> [b]
+mf = (. map) . (.) . filter
 
 createSceneUI
     :: IORef World

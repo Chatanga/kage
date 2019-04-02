@@ -221,7 +221,7 @@ processEvent ui event@(EventMouseButton b bs _) = do
             GLFW.MouseButton'1 -> if bs == GLFW.MouseButtonState'Released
                 then ui'{ uiRoot = resetDrag <$> uiRoot ui', uiMouseDrag = Nothing }
                 else case (uiMouseDrag ui', uiCursorPos ui', uiMouseDrag ui') of
-                    (Nothing, Just p, Nothing) -> case selectDeepestAt p (fromTree (uiRoot ui')) of
+                    (Nothing, Just p, Nothing) -> case selectDeepestAt p (fromTree (uiRoot ui')) of
                         Just loc ->
                             let loc' = modifyLabel (\v -> v{ viewIsDragOrigin = True }) loc
                             in  ui'{ uiRoot = toTree (root loc'), uiMouseDrag = uiCursorPos ui' }
