@@ -34,18 +34,3 @@ $ sudo apt-get install mesa-common-dev libgl1-mesa-dev libxi-dev libxrandr-dev l
 ```
 
 Lastly, my rendering hardware is a AMD RX 470 with the free AMDGPU driver. No doubt it will work on most graphic cards supporting the OpenGL 4.3 Core Profile.
-
-On Linux Mint 18.1:
-```
-Renderer: Gallium 0.4 on AMD POLARIS10 (DRM 3.3.0 / 4.8.0-41-generic, LLVM 4.0.0)
-OpenGL version: 4.5 (Core Profile) Mesa 17.1.2
-Shading language version: 4.50
-```
-
-Then currently on Ubuntu 18.04:
-```
-Renderer: AMD Radeon (TM) RX 470 Graphics (POLARIS10 / DRM 3.23.0 / 4.15.0-22-generic, LLVM 6.0.0)
-OpenGL version: 4.5 (Core Profile) Mesa 18.0.0-rc5
-Shading language version: 4.50
-```
-
