@@ -1,3 +1,0 @@
-#! /bin/bash
-VOGL_PATH=/home/antares/Internet/Productions/Code/vogl/vogl_build
-VOGL_CMD_LINE="--vogl_tracefile vogltrace.bin" LD_PRELOAD=$(readlink -f $VOGL_PATH/libvogltrace64.so) stack exec kage-exe
